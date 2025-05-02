@@ -8,6 +8,8 @@ import {
   Skeleton, 
   SimpleGrid,
   Box,
+  Tooltip,
+  Icon,
 } from '@chakra-ui/react' 
 import { useAccount, useReadContracts } from 'wagmi'
 import { useMemo, useState, useEffect, useRef } from 'react'
@@ -16,28 +18,53 @@ import { getFarmPools, PoolInfo } from '../config/pools'
 import sparxAbi from '../abis/SparxToken.json' with { type: 'json' }
 import farmAbi from '../abis/SparxFarm.json' with { type: 'json' }
 import erc20Abi from '../abis/ERC20.json' with { type: 'json' }
+import burnerAbi from '../abis/SparxBurner.json' with { type: 'json' }
 import { formatUnits, type Abi, zeroAddress, Address } from 'viem'
 import { useCountdown } from '../hooks/useCountdown'
 
 // const sparxAbiTyped = sparxAbi as Abi; // These seem unused now
 // const farmAbiTyped = farmAbi as Abi;
 const sparxAbiDirect = sparxAbi as Abi; // Use the imported json directly as abi
-const farmAbiTyped = farmAbi as Abi; // Keep this one for farm reads
+const farmAbiTyped = farmAbi as Abi; // Use V2 ABI
+const burnerAbiTyped = burnerAbi as Abi; // Use the burner ABI
 
 // Theme colors - REMOVE these, use theme directly
 // const accentColor = 'orange.400';
 // const yellowColor = 'yellow.400';
 
-function formatLargeNumber(value: bigint | null | undefined, decimals = 18): string {
-  if (value === null || typeof value === 'undefined') return '...';
+// Placeholder Prices
+const PLACEHOLDER_PRICES = {
+  SPARX: 0.05,
+  XBURN: 0.12,
+  XEN: 0.00000015 // Example price for XEN
+};
 
-  const num = parseFloat(formatUnits(value, decimals));
+function formatLargeNumber(value: bigint | number | null | undefined, inputDecimals = 18): string {
+  if (value === null || typeof value === 'undefined') return '...';
+  let num: number;
+  if (typeof value === 'bigint') {
+    num = parseFloat(formatUnits(value, inputDecimals));
+  } else {
+    num = value;
+  }
 
   if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
   if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
   if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
-  if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
-  return num.toFixed(2);
+  // Don't use K for values below 1M, show exact value
+  // if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K'; 
+  return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatPrice(value: number | null | undefined): string {
+  if (value === null || typeof value === 'undefined') return '...';
+  // Use maximumFractionDigits for small prices like XEN
+  const options: Intl.NumberFormatOptions = { 
+    style: 'currency', 
+    currency: 'USD', 
+    maximumFractionDigits: value < 0.001 ? 8 : 4 
+  };
+  return value.toLocaleString('en-US', options);
 }
 
 function GlobalStatsBanner() {
@@ -68,23 +95,30 @@ function GlobalStatsBanner() {
 
   // --- Contract Reads --- 
   
-  // Static Reads (Token Info, Burner Balance, Farm Info)
+  // Static Reads (Token Info, Burner Balance, Farm Info, Farm Rate)
   const baseContractsToRead = useMemo(() => {
     const calls: any[] = [];
     
     if (sparxAddress !== zeroAddress && currentChainId) {
-      // Fetch Total Supply
+      // Get current supply
       calls.push({ address: sparxAddress, abi: sparxAbiDirect, functionName: 'totalSupply', chainId: currentChainId, dataType: 'sparxTotalSupply' });
-      // Fetch Burned Amount (balance of zero address)
-      calls.push({ address: sparxAddress, abi: sparxAbiDirect, functionName: 'balanceOf', args: [zeroAddress], chainId: currentChainId, dataType: 'sparxBurnedAmount' });
-
-      if (burnerAddress !== zeroAddress) { // Check if burner is deployed
+      // Get cap
+      calls.push({ address: sparxAddress, abi: sparxAbiDirect, functionName: 'CAP', chainId: currentChainId, dataType: 'sparxCap' });
+      
+      // Use the dedicated burn tracking function
+      calls.push({ address: sparxAddress, abi: sparxAbiDirect, functionName: 'getTotalBurned', chainId: currentChainId, dataType: 'sparxTotalBurned' });
+      
+      if (burnerAddress !== zeroAddress) {
         calls.push({ address: sparxAddress, abi: sparxAbiDirect, functionName: 'balanceOf', args: [burnerAddress], chainId: currentChainId, dataType: 'burnerSparxBalance' });
+        
+        // Also get burns tracked by the burner contract
+        calls.push({ address: burnerAddress, abi: burnerAbiTyped, functionName: 'getTotalSparxBurned', chainId: currentChainId, dataType: 'burnerSparxBurned' });
       }
     }
     if (farmAddress !== zeroAddress && currentChainId) {
       calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'poolLength', chainId: currentChainId, dataType: 'farmPoolLength' });
       calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'getEmissionPhaseInfo', chainId: currentChainId, dataType: 'farmEmissionInfo' });
+      calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'currentRate', chainId: currentChainId, dataType: 'farmCurrentRate' });
     }
     return calls;
   }, [sparxAddress, burnerAddress, farmAddress, currentChainId]);
@@ -96,84 +130,84 @@ function GlobalStatsBanner() {
 
   // Update poolCount when base data is loaded
   useEffect(() => {
-      // Find the poolLength result directly
       const poolLengthCallIndex = baseContractsToRead.findIndex(c => c.dataType === 'farmPoolLength');
       let newPoolCount = 0;
       if (poolLengthCallIndex !== -1 && baseReadResults && baseReadResults[poolLengthCallIndex]?.status === 'success') {
           const resultValue = baseReadResults[poolLengthCallIndex].result;
           if (typeof resultValue === 'bigint') {
               newPoolCount = Number(resultValue);
-          } else if (!isLoadingBase) {
-              // If loading is finished and result wasn't bigint, assume 0
-              newPoolCount = 0;
-          } else {
-              // Still loading or error, don't update count yet
-              return;
           }
-      } else if (!isLoadingBase && baseContractsToRead.some(c => c.dataType === 'farmPoolLength')) {
-         // If loading is finished and the call existed but failed or wasn't found, assume 0
-         newPoolCount = 0;
       }
-      
-      // Only update state if the count has actually changed
-      setPoolCount(currentCount => {
-          if (currentCount !== newPoolCount) {
-              return newPoolCount;
-          }
-          return currentCount; // No change
-      });
+      setPoolCount(newPoolCount);
+  }, [baseReadResults, baseContractsToRead]); // Re-run if baseContractsToRead changes (e.g., chain switch)
 
-  // Simplify dependencies - baseContractsToRead reference might change unnecessarily
-  }, [baseReadResults, isLoadingBase]);
-
-  // Dynamic Reads (Pending Rewards for each pool)
-  const pendingRewardsContracts = useMemo(() => {
+  // Dynamic Reads (Pending Rewards + PoolInfo for each pool)
+  const dynamicContracts = useMemo(() => {
     const calls: any[] = [];
-    if (!userAddress || !isConnected || !chain || poolCount === 0 || farmAddress === zeroAddress) return [];
+    if (!chain || poolCount === 0 || farmAddress === zeroAddress) return [];
 
     for (let pid = 0; pid < poolCount; pid++) {
+      if (userAddress && isConnected) { // Only fetch rewards if connected
+          calls.push({
+              address: farmAddress,
+              abi: farmAbiTyped,
+              functionName: 'pendingRewards',
+              args: [BigInt(pid), userAddress],
+              chainId: chain.id,
+              dataType: 'pendingReward',
+              pid: pid
+          });
+      }
+      // Always fetch poolInfo
       calls.push({
           address: farmAddress,
           abi: farmAbiTyped,
-          functionName: 'pendingRewards',
-          args: [BigInt(pid), userAddress],
+          functionName: 'poolInfo',
+          args: [BigInt(pid)],
           chainId: chain.id,
-          dataType: 'pendingReward'
+          dataType: 'poolInfo',
+          pid: pid
       });
     }
     return calls;
   }, [userAddress, isConnected, chain, poolCount, farmAddress]);
 
-  const { data: rewardsReadResults, isLoading: isLoadingRewards } = useReadContracts({
-      contracts: pendingRewardsContracts,
-      query: { enabled: isConnected && pendingRewardsContracts.length > 0 }
+  const { data: dynamicReadResults, isLoading: isLoadingDynamic } = useReadContracts({
+      contracts: dynamicContracts,
+      query: { enabled: dynamicContracts.length > 0 }
   });
   
-  // Store contracts in a ref to prevent useEffect dependency loops
-  const contractsToReadRef = useRef(baseContractsToRead);
-  useEffect(() => {
-      contractsToReadRef.current = baseContractsToRead;
-  }, [baseContractsToRead]);
+  // Store contracts in refs to prevent useEffect dependency loops
+  const baseContractsRef = useRef(baseContractsToRead);
+  const dynamicContractsRef = useRef(dynamicContracts);
+  useEffect(() => { baseContractsRef.current = baseContractsToRead; }, [baseContractsToRead]);
+  useEffect(() => { dynamicContractsRef.current = dynamicContracts; }, [dynamicContracts]);
 
-  // Process ALL base results and calculate derived values together
+  // Process ALL results and calculate derived values together
   const {
     burnerSparxBalance,
     farmEmissionInfo,
+    farmCurrentRate,
     totalPendingRewards,
     sparxTotalSupply,
+    sparxCap,
     sparxBurnedAmount,
+    burnerSparxBurned
   } = useMemo(() => {
     let burnerBalance: bigint | null = null;
     let emissionInfo: any = null;
+    let currentRate: bigint | null = null;
     let pending: bigint = 0n;
     let totalSupply: bigint | null = null;
-    let burnedAmount: bigint | null = null;
+    let cap: bigint | null = null;
+    let burned: bigint | null = null;
+    let burnerBurned: bigint | null = null;
 
     try {
       // Process base results
       baseReadResults?.forEach((result, index) => {
         if (result.status !== 'success') return;
-        const call = contractsToReadRef.current[index]; 
+        const call = baseContractsRef.current[index]; 
         if (!call) return;
 
         switch (call.dataType) {
@@ -183,11 +217,22 @@ function GlobalStatsBanner() {
             case 'farmEmissionInfo':
                 emissionInfo = result.result;
                 break;
-            case 'sparxTotalSupply':
-                 if (typeof result.result === 'bigint') totalSupply = result.result;
+            case 'farmCurrentRate':
+                if (typeof result.result === 'bigint') currentRate = result.result;
                 break;
-            case 'sparxBurnedAmount':
-                 if (typeof result.result === 'bigint') burnedAmount = result.result;
+            case 'sparxTotalSupply':
+                if (typeof result.result === 'bigint') totalSupply = result.result;
+                break;
+            case 'sparxCap':
+                if (typeof result.result === 'bigint') cap = result.result;
+                break;
+            case 'sparxTotalBurned':
+                if (typeof result.result === 'bigint') burned = result.result;
+                console.log('Total SPARX burned from token contract:', burned ? formatUnits(burned, 18) : '0');
+                break;
+            case 'burnerSparxBurned':
+                if (typeof result.result === 'bigint') burnerBurned = result.result;
+                console.log('Total SPARX burned from burner contract:', burnerBurned ? formatUnits(burnerBurned, 18) : '0');
                 break;
             case 'farmPoolLength': 
                 break;
@@ -196,108 +241,220 @@ function GlobalStatsBanner() {
         }
       });
 
-      // Process reward results
-      rewardsReadResults?.forEach(result => {
-          if (result.status === 'success' && typeof result.result === 'bigint') {
-              pending += result.result;
-          }
+      // Process dynamic results (rewards and poolInfo)
+      dynamicReadResults?.forEach((result, index) => {
+        if (result.status !== 'success') return;
+        const call = dynamicContractsRef.current[index];
+        if (!call) return;
+
+        if (call.dataType === 'pendingReward' && typeof result.result === 'bigint') {
+            pending += result.result;
+        }
       });
+      
+      // Log for debugging
+      console.log('Total Supply:', totalSupply ? formatUnits(totalSupply, 18) : '0');
+      console.log('Cap:', cap ? formatUnits(cap, 18) : '0');
+      
     } catch (error) {
       console.error('Error processing contract results:', error);
-      return {
+      // Return defaults on error
+      return { 
         burnerSparxBalance: null,
         farmEmissionInfo: null,
+        farmCurrentRate: null,
         totalPendingRewards: 0n,
         sparxTotalSupply: null,
+        sparxCap: null,
         sparxBurnedAmount: null,
+        burnerSparxBurned: null
       };
     }
 
     return { 
       burnerSparxBalance: burnerBalance,
       farmEmissionInfo: emissionInfo,
+      farmCurrentRate: currentRate,
       totalPendingRewards: pending,
       sparxTotalSupply: totalSupply,
-      sparxBurnedAmount: burnedAmount,
+      sparxCap: cap,
+      sparxBurnedAmount: burned,
+      burnerSparxBurned: burnerBurned
     };
-  }, [baseReadResults, rewardsReadResults]);
-
-  // Calculate Circulating Supply AFTER processing results
-  const circulatingSupply = useMemo(() => {
-      if (sparxTotalSupply !== null && burnerSparxBalance !== null) {
-          // Simple calc: Total Supply - Burner Contract Balance
-          // A more complex calculation might subtract other locked/non-circulating balances
-          return sparxTotalSupply - burnerSparxBalance;
-      }
-      return null; // Return null if required data isn't available
-  }, [sparxTotalSupply, burnerSparxBalance]);
+  }, [baseReadResults, dynamicReadResults]);
 
   // --- Derived Stats ---
   const currentPhaseEnd = farmEmissionInfo && Array.isArray(farmEmissionInfo) && farmEmissionInfo.length > 1 
     ? farmEmissionInfo[1] as bigint 
     : undefined;
   const phaseEndTimer = useCountdown(currentPhaseEnd);
+  
+  const emissionRatePerDay = useMemo(() => {
+      if (farmCurrentRate === null) return null;
+      return farmCurrentRate * 86400n; // Rate per second * seconds per day
+  }, [farmCurrentRate]);
 
-  // Use the fetched burned amount directly
-  const totalBurned = sparxBurnedAmount; 
+  const totalSupplyPercentage = useMemo(() => {
+      if (sparxTotalSupply === null || sparxCap === null || sparxCap === 0n) return null;
+      return Number((sparxTotalSupply * 10000n) / sparxCap) / 100;
+  }, [sparxTotalSupply, sparxCap]);
 
   // Combine loading states
-  const isLoading = isLoadingBase || isLoadingRewards;
+  const isLoading = isLoadingBase || isLoadingDynamic;
 
   return (
-    <Box bg='gray.700' borderRadius="xl" p={5} mb={6} boxShadow="md"> {/* Use theme color */}
+    <Box 
+      bg='gray.800' 
+      borderRadius="xl" 
+      p={5} 
+      mb={6} 
+      boxShadow="md"
+      borderWidth="1px"
+      borderColor="gray.700"
+    > 
       <SimpleGrid columns={{ base: 1, sm: 2, md: 4 }} spacing={5}>
-        {/* REMOVED SPARX Supply */}
-        {/* 
-        <Stat>
-          <StatLabel color={textColor}>SPARX Supply</StatLabel>
-          <StatNumber color={headingColor}>{isLoading && currentSparxSupply === null ? <Skeleton height="24px" width="100px" /> : formatLargeNumber(currentSparxSupply)}</StatNumber>
-          <StatHelpText color={textColor}>Max: {formatLargeNumber(maxSparxSupply)}</StatHelpText>
-        </Stat>
-        */}
-         {/* Circulating Supply (Est.) */}
-        <Stat>
-          <StatLabel color='gray.300'>Circulating Supply (Est.)</StatLabel> {/* Use theme color */}
-          <StatNumber color='brand.500'> {/* Use new theme brand color */}
-            {isLoading && circulatingSupply === null ? (
-              <Skeleton height="24px" width="100px" />
-            ) : (
-              circulatingSupply === null ? 'Calculating...' : formatLargeNumber(circulatingSupply)
-            )}
+        {/* SPARX Price Placeholder */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>SPARX Price</StatLabel>
+          <StatNumber color='yellow.400'>
+            {formatPrice(PLACEHOLDER_PRICES.SPARX)}
           </StatNumber>
-          <StatHelpText color='gray.300'>Total - Burner Balance</StatHelpText> {/* Use theme color */}
+          <StatHelpText color='gray.400'>Testnet Placeholder</StatHelpText>
         </Stat>
-         {/* Reward Phase End */}
-        <Stat>
-            <StatLabel color='gray.300'>Reward Phase Ends In</StatLabel> {/* Use theme color */}
-             <Skeleton isLoaded={!isLoading && Boolean(currentPhaseEnd)} minHeight="24px">
-                <StatNumber color='brand.500'> {/* Use new theme brand color */}
-                     {phaseEndTimer === 'Ready' ? 'Ended' : phaseEndTimer}
-                </StatNumber>
-            </Skeleton>
-             <StatHelpText color='gray.300'>Current Emission Phase</StatHelpText> {/* Use theme color */}
+        {/* XBURN Price Placeholder */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>XBURN Price</StatLabel>
+          <StatNumber color='red.400'>
+            {formatPrice(PLACEHOLDER_PRICES.XBURN)}
+          </StatNumber>
+          <StatHelpText color='gray.400'>Testnet Placeholder</StatHelpText>
         </Stat>
-         {/* User Pending Rewards */}
-        <Stat>
-          <StatLabel color='gray.300'>Your Pending Rewards</StatLabel> {/* Use theme color */}
-          <StatNumber color='yellow.400'> {/* Keep yellow for this stat */}
+        {/* XEN Price Placeholder */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>XEN Price</StatLabel>
+          <StatNumber color='blue.400'>
+             {formatPrice(PLACEHOLDER_PRICES.XEN)}
+          </StatNumber>
+          <StatHelpText color='gray.400'>Testnet Placeholder</StatHelpText>
+        </Stat>
+        {/* User Pending Rewards */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>Your Pending Rewards</StatLabel>
+          <StatNumber color='yellow.400'>
             {isLoading && totalPendingRewards === 0n && isConnected ? <Skeleton height="24px" width="80px" /> : 
              !isConnected ? 'Connect Wallet' : 
              `${formatLargeNumber(totalPendingRewards)} SPARX`}
           </StatNumber>
-          <StatHelpText color='gray.300'>From All Farm Pools</StatHelpText> {/* Use theme color */}
+          <StatHelpText color='gray.300'>From All Farm Pools</StatHelpText>
         </Stat>
-         {/* Total Burned */}
-        <Stat>
-          <StatLabel color='gray.300'>Total SPARX Burned</StatLabel>
-          <StatNumber color='brand.500'> {/* Use new theme brand color */}
-            {isLoading || totalBurned === null ? (
-              <Skeleton height="24px" width="100px" />
+        {/* Ready to Ignite */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>Ready to Ignite</StatLabel>
+           <Tooltip label="SPARX accumulated in the Burner contract, ready for the buy-and-burn mechanism." placement="top" hasArrow bg="gray.800">
+                <StatNumber color='orange.400'>
+                    {isLoading && burnerSparxBalance === null ? (
+                    <Skeleton height="24px" width="90px" />
+                    ) : (
+                    burnerSparxBalance === null ? '...' : `${formatLargeNumber(burnerSparxBalance)} SPARX`
+                    )}
+                </StatNumber>
+          </Tooltip>
+          <StatHelpText color='gray.300'>SPARX in Burner Vault</StatHelpText>
+        </Stat>
+        {/* Emission Rate */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>Emission Rate</StatLabel>
+          <StatNumber color='orange.400'>
+            {isLoading && emissionRatePerDay === null ? (
+              <Skeleton height="24px" width="120px" />
             ) : (
-              formatLargeNumber(totalBurned, 18) 
+              emissionRatePerDay === null ? '...' : `${formatLargeNumber(emissionRatePerDay)} SPARX/day`
             )}
           </StatNumber>
-          <StatHelpText color='gray.300'>SPARX</StatHelpText>
+          <StatHelpText color='gray.300'>Current Farm Rewards</StatHelpText>
+        </Stat>
+        {/* Total Burned SPARX - Re-added */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>Total SPARX Burned</StatLabel>
+          <StatNumber color='red.400'>
+            {isLoading || sparxBurnedAmount === null ? (
+              formatLargeNumber(0n, 18)
+            ) : (
+              formatLargeNumber(sparxBurnedAmount, 18)
+            )}
+          </StatNumber>
+          <StatHelpText color='gray.300'>Total Tokens Burned</StatHelpText>
+        </Stat>
+        {/* Total Supply / Cap */}
+        <Stat 
+          bg="gray.700" 
+          p={3} 
+          borderRadius="md" 
+          boxShadow="sm"
+          transition="all 0.2s"
+          _hover={{ transform: 'translateY(-2px)', boxShadow: 'md' }}
+        >
+          <StatLabel color='gray.300'>Total Supply</StatLabel>
+          <StatNumber color='blue.400'>
+            {isLoading && (sparxTotalSupply === null || sparxCap === null) ? (
+              <Skeleton height="24px" width="100px" />
+            ) : (
+              sparxTotalSupply === null || sparxCap === null ? '...' : 
+              `${formatLargeNumber(sparxTotalSupply)} / ${formatLargeNumber(sparxCap)}`
+            )}
+          </StatNumber>
+          <StatHelpText color='gray.300'>
+            {totalSupplyPercentage !== null ? `${totalSupplyPercentage.toFixed(2)}% of Cap` : '...'}
+          </StatHelpText>
         </Stat>
       </SimpleGrid>
     </Box>
