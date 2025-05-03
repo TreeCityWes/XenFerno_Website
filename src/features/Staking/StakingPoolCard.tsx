@@ -394,9 +394,9 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
     
     // Update selected lock time based on index (used for UI)
     if (index === 0) setSelectedLockTime(0); // No lock
-    else if (index === 1) setSelectedLockTime(7); // 7 days
-    else if (index === 2) setSelectedLockTime(14); // 14 days
-    else if (index === 3) setSelectedLockTime(30); // 30 days
+    else if (index === 1) setSelectedLockTime(1); // 1 day
+    else if (index === 2) setSelectedLockTime(3); // 3 days
+    else if (index === 3) setSelectedLockTime(7); // 7 days
   };
 
   // --- Event Handlers ---
@@ -743,7 +743,7 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
                   >
                     No Lock
                   </Button>
-                  {/* 7d Button */}
+                  {/* 1d Button */}
                   <Button 
                     size="sm" 
                     height="40px"
@@ -755,9 +755,9 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
                     onClick={() => handleLockOptionSelect(1)}
                     _hover={{ bg: "gray.700", borderColor: selectedOptionIndex === 1 ? primaryColor : 'gray.500' }}
                   >
-                    7d (+50%)
+                    1d (+50%)
                   </Button>
-                  {/* 14d Button */}
+                  {/* 3d Button */}
                   <Button 
                     size="sm" 
                     height="40px"
@@ -769,9 +769,9 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
                     onClick={() => handleLockOptionSelect(2)}
                     _hover={{ bg: "gray.700", borderColor: selectedOptionIndex === 2 ? primaryColor : 'gray.500' }}
                   >
-                    14d (+100%)
+                    3d (+100%)
                   </Button>
-                  {/* 30d Button */}
+                  {/* 7d Button */}
                   <Button 
                     size="sm" 
                     height="40px"
@@ -783,7 +783,7 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
                     onClick={() => handleLockOptionSelect(3)}
                     _hover={{ bg: "gray.700", borderColor: selectedOptionIndex === 3 ? primaryColor : 'gray.500' }}
                   >
-                    30d (+200%)
+                    7d (+200%)
                   </Button>
                 </SimpleGrid>
               </FormControl>
