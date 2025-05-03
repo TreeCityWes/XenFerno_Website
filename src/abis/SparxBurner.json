@@ -88,6 +88,25 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldMinimum",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newMinimum",
+        "type": "uint256"
+      }
+    ],
+    "name": "MinimumIgniteAmountUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "address",
         "name": "previousOwner",
@@ -256,19 +275,6 @@
   },
   {
     "inputs": [],
-    "name": "MINIMUM_IGNITE_AMOUNT",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
     "name": "PERCENTAGE_DENOMINATOR",
     "outputs": [
       {
@@ -320,6 +326,38 @@
     "inputs": [
       {
         "internalType": "uint256",
+        "name": "amountSparxIn",
+        "type": "uint256"
+      }
+    ],
+    "name": "estimateXBurnOut",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "estimatedXburnOut",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getSwapPath",
+    "outputs": [
+      {
+        "internalType": "address[]",
+        "name": "path",
+        "type": "address[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
         "name": "customSlippagePercentage",
         "type": "uint256"
       }
@@ -339,6 +377,19 @@
   {
     "inputs": [],
     "name": "minAmountOutPercentage",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "minimumIgniteAmount",
     "outputs": [
       {
         "internalType": "uint256",
@@ -414,6 +465,19 @@
       }
     ],
     "name": "setMinAmountOutPercentage",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_newMinimum",
+        "type": "uint256"
+      }
+    ],
+    "name": "setMinimumIgniteAmount",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

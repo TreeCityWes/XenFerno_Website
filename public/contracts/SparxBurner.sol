@@ -20,12 +20,12 @@ error SparxBurner__InvalidDeadlineBuffer();
 error SparxBurner__RewardTransferFailed(); // Added for reward failure
 error OwnableUnauthorizedAccount(address account); // Keep standard Ownable error
 
-// Interface for SPARX token (assuming standard burn)
+// Interface for SPARX token with burn support
 interface ISparxToken is IERC20 {
     function burn(uint256 amount) external;
 }
 
-// Interface specifically for XBURN token (XBurnMinter)
+// Interface for XBURN token
 interface IXBurnToken is IERC20 {
     function burnXburn(uint256 amount) external;
 }
@@ -54,11 +54,17 @@ interface IUniswapV2Router02 {
  * @dev Implements a buy-and-burn mechanism with caller incentive using a DEX router.
  */
 contract SparxBurner is Ownable, ReentrancyGuard {
-    using SafeERC20 for IERC20; // Use SafeERC20 for all ERC20 transfers
+    using SafeERC20 for IERC20;
 
     ISparxToken public sparxToken;
     IXBurnToken public xburnToken;
     IUniswapV2Router02 public router;
+
+    // Burn tracking
+    uint256 public totalSparxBurned;
+    uint256 public totalXburnBurned;
+    mapping(address => uint256) public sparxBurnsByUser;
+    mapping(address => uint256) public xburnBurnsByUser;
 
     // Constants
     uint256 public constant CALLER_REWARD_PERCENT = 5; // 5%
@@ -86,6 +92,7 @@ contract SparxBurner is Ownable, ReentrancyGuard {
     event MinAmountOutPercentageUpdated(uint256 oldPercentage, uint256 newPercentage);
     event SwapDeadlineBufferUpdated(uint256 oldBuffer, uint256 newBuffer);
     event MinimumIgniteAmountUpdated(uint256 oldMinimum, uint256 newMinimum);
+    event TokensBurned(address indexed token, uint256 amount);
 
     constructor(
         address _sparxToken,
@@ -157,7 +164,12 @@ contract SparxBurner is Ownable, ReentrancyGuard {
 
         // 3. Perform Swap (only if amountToSwap > 0)
         if (amountToSwap > 0) {
-            // Approve router to spend SPARX - only need one approval
+            // First approve with zero to handle tokens that require it
+            try IERC20(address(sparxToken)).approve(address(router), 0) {} catch {
+                revert SparxBurner__ApprovalFailed();
+            }
+            
+            // Then approve the actual amount
             try IERC20(address(sparxToken)).approve(address(router), amountToSwap) {} catch {
                 revert SparxBurner__ApprovalFailed();
             }
@@ -206,22 +218,26 @@ contract SparxBurner is Ownable, ReentrancyGuard {
 
         // 4. Burn remaining SPARX (only if amount > 0)
         if (amountToBurnSparx > 0) {
-            // Call the public burn function on SparxToken
-            // The SparxBurner contract calls burn, burning tokens it holds.
-            try sparxToken.burn(amountToBurnSparx) {}
-            catch {
-                 revert SparxBurner__BurnFailed(); // Revert if the burn call fails
-            }
-            // IERC20(address(sparxToken)).safeTransfer(address(0), amountToBurnSparx);
-            // // If safeTransfer fails, it will revert automatically.
-            // // The SparxToken._afterTokenTransfer hook handles the SparxBurned event.
+            // Call the dedicated burn function on the SPARX token
+            sparxToken.burn(amountToBurnSparx);
+            
+            // Update burn tracking
+            totalSparxBurned += amountToBurnSparx;
+            sparxBurnsByUser[msg.sender] += amountToBurnSparx;
+            
+            emit TokensBurned(address(sparxToken), amountToBurnSparx);
         }
 
         // 5. Burn received XBURN (only if amount > 0)
         if (actualXburnReceived > 0) {
-            try xburnToken.burnXburn(actualXburnReceived) {} catch { 
-                revert SparxBurner__BurnFailed(); 
-            }
+            // Call the dedicated burnXburn function on the XBURN token
+            xburnToken.burnXburn(actualXburnReceived);
+            
+            // Update burn tracking
+            totalXburnBurned += actualXburnReceived;
+            xburnBurnsByUser[msg.sender] += actualXburnReceived;
+            
+            emit TokensBurned(address(xburnToken), actualXburnReceived);
         }
 
         emit TokensIgnited(
@@ -341,5 +357,39 @@ contract SparxBurner is Ownable, ReentrancyGuard {
             return 0;
         }
         return 0; // Should not be reached if try/catch works as expected
+    }
+
+    /**
+     * @notice Returns the total amount of SPARX burned by this contract
+     * @return Total amount of SPARX burned
+     */
+    function getTotalSparxBurned() external view returns (uint256) {
+        return totalSparxBurned;
+    }
+    
+    /**
+     * @notice Returns the total amount of XBURN burned by this contract
+     * @return Total amount of XBURN burned
+     */
+    function getTotalXburnBurned() external view returns (uint256) {
+        return totalXburnBurned;
+    }
+    
+    /**
+     * @notice Returns the amount of SPARX burned by a specific user through this contract
+     * @param user The address to check
+     * @return Amount of SPARX burned by the user
+     */
+    function getSparxBurnedByUser(address user) external view returns (uint256) {
+        return sparxBurnsByUser[user];
+    }
+    
+    /**
+     * @notice Returns the amount of XBURN burned by a specific user through this contract
+     * @param user The address to check
+     * @return Amount of XBURN burned by the user
+     */
+    function getXburnBurnedByUser(address user) external view returns (uint256) {
+        return xburnBurnsByUser[user];
     }
 }

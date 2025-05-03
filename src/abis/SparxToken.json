@@ -38,6 +38,11 @@
   },
   {
     "inputs": [],
+    "name": "Sparx__AlreadyMinter",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "Sparx__CannotRemoveCoreExemption",
     "type": "error"
   },
@@ -75,6 +80,11 @@
   {
     "inputs": [],
     "name": "Sparx__MaxMintersReached",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Sparx__NotMinter",
     "type": "error"
   },
   {
@@ -120,6 +130,25 @@
       }
     ],
     "name": "Approval",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "oldTreasury",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newTreasury",
+        "type": "address"
+      }
+    ],
+    "name": "DevTreasuryUpdated",
     "type": "event"
   },
   {
@@ -328,6 +357,25 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "SparxBurned",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "minter",
         "type": "address"
       },
@@ -479,6 +527,19 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "_minter",
+        "type": "address"
+      }
+    ],
+    "name": "addMinter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "owner",
         "type": "address"
       },
@@ -551,24 +612,6 @@
       }
     ],
     "name": "burn",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "account",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      }
-    ],
-    "name": "burnFrom",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -733,6 +776,19 @@
         "internalType": "uint256",
         "name": "denominator",
         "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getMinters",
+    "outputs": [
+      {
+        "internalType": "address[]",
+        "name": "addresses",
+        "type": "address[]"
       }
     ],
     "stateMutability": "view",
@@ -904,6 +960,19 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "_minter",
+        "type": "address"
+      }
+    ],
+    "name": "removeMinter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "bytes32",
         "name": "role",
         "type": "bytes32"
@@ -954,6 +1023,19 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "_newTreasury",
+        "type": "address"
+      }
+    ],
+    "name": "setDevTreasury",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "account",
         "type": "address"
       },
@@ -982,24 +1064,6 @@
       }
     ],
     "name": "setFees",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "_minter",
-        "type": "address"
-      },
-      {
-        "internalType": "bool",
-        "name": "_isMinter",
-        "type": "bool"
-      }
-    ],
-    "name": "setMinter",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

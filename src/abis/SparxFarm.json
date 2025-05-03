@@ -47,12 +47,22 @@
   },
   {
     "inputs": [],
+    "name": "SparxFarmV2__BonusTooLow",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "SparxFarmV2__CooldownActive",
     "type": "error"
   },
   {
     "inputs": [],
     "name": "SparxFarmV2__DepositsClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SparxFarmV2__DurationsMustAscend",
     "type": "error"
   },
   {
@@ -87,12 +97,27 @@
   },
   {
     "inputs": [],
+    "name": "SparxFarmV2__InvalidLockOptionIndex",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "SparxFarmV2__InvalidPhase",
     "type": "error"
   },
   {
     "inputs": [],
+    "name": "SparxFarmV2__InvalidPid",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "SparxFarmV2__MaxPoolsReached",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SparxFarmV2__NoLockOptionsProvided",
     "type": "error"
   },
   {
@@ -108,6 +133,11 @@
   {
     "inputs": [],
     "name": "SparxFarmV2__PoolAlreadyExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SparxFarmV2__StakeLocked",
     "type": "error"
   },
   {
@@ -377,7 +407,7 @@
       {
         "indexed": true,
         "internalType": "address",
-        "name": "lp",
+        "name": "token",
         "type": "address"
       },
       {
@@ -711,6 +741,23 @@
         "internalType": "address",
         "name": "_token",
         "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "duration",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "bonusMultiplier",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct SparxFarmV2.LockOption[]",
+        "name": "_options",
+        "type": "tuple[]"
       }
     ],
     "name": "addPool",
@@ -755,6 +802,11 @@
         "internalType": "uint256",
         "name": "_amount",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint8",
+        "name": "_optionIndex",
+        "type": "uint8"
       }
     ],
     "name": "deposit",
@@ -962,6 +1014,123 @@
         "internalType": "uint256",
         "name": "",
         "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_pid",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_user",
+        "type": "address"
+      }
+    ],
+    "name": "getUserInfo",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "rewardDebt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "lastActionTimestamp",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "lastActionBlock",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "lastWithdrawTimestamp",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "actionsInBlock",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "unlockTimestamp",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "chosenBonusMultiplier",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct SparxFarmV2.UserInfo",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_pid",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_user",
+        "type": "address"
+      }
+    ],
+    "name": "getUserStakeInfo",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "chosenBonusMultiplier",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "userUnlockTimestamp",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "secondsRemaining",
+        "type": "uint256"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "duration",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "bonusMultiplier",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct SparxFarmV2.LockOption[]",
+        "name": "poolOptions",
+        "type": "tuple[]"
       }
     ],
     "stateMutability": "view",
@@ -1553,6 +1722,16 @@
       {
         "internalType": "uint256",
         "name": "actionsInBlock",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "unlockTimestamp",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "chosenBonusMultiplier",
         "type": "uint256"
       }
     ],

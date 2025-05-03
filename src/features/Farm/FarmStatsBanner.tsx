@@ -46,74 +46,6 @@ function formatLargeNumber(value: bigint | null | undefined, decimals = 18): str
     return num.toFixed(0); // Show whole numbers for supply
 }
 
-// Simple Phase Timeline component
-const PhaseTimeline = ({ currentPhase, ratePerSecond, phaseEndTimestamp }: { 
-    currentPhase: number | undefined, 
-    ratePerSecond: bigint | undefined,
-    phaseEndTimestamp: bigint | undefined 
-}) => {
-    // Assume 5 phases total for visual representation
-    const totalPhases = 5;
-    const currentPhaseIndex = currentPhase !== undefined ? currentPhase : 0;
-    
-    // Format timestamp for tooltip
-    const endDateFormatted = phaseEndTimestamp ? 
-        new Date(Number(phaseEndTimestamp * 1000n)).toLocaleDateString() : 'Unknown';
-    
-    // Format rate for tooltip
-    const rateFormatted = ratePerSecond ? 
-        `${formatUnits(ratePerSecond, 18)} SPARX/sec` : 'Unknown';
-    
-    return (
-        <Box mb={4}>
-            <Text fontSize="xs" color={subtleTextColor} mb={1}>Emission Phase Timeline</Text>
-            <Flex>
-                {Array.from({ length: totalPhases }).map((_, index) => {
-                    // Past phases
-                    const isPast = index < currentPhaseIndex;
-                    // Current phase
-                    const isCurrent = index === currentPhaseIndex;
-                    // Future phases
-                    const isFuture = index > currentPhaseIndex;
-                    
-                    return (
-                        <Tooltip 
-                            key={index}
-                            label={isCurrent ? 
-                                `Current Phase ${currentPhaseIndex + 1}: ${rateFormatted} until ${endDateFormatted}` : 
-                                isPast ? `Phase ${index + 1}: Completed` : `Phase ${index + 1}: Future`
-                            }
-                        >
-                            <Box
-                                flex="1"
-                                h="4px"
-                                bg={isPast ? enabledColor : isCurrent ? sparxColor : "gray.600"}
-                                mx={0.5}
-                                borderRadius="full"
-                                position="relative"
-                            >
-                                {isCurrent && (
-                                    <Box
-                                        position="absolute"
-                                        top="-4px"
-                                        left="50%"
-                                        transform="translateX(-50%)"
-                                        w="12px"
-                                        h="12px"
-                                        borderRadius="full"
-                                        bg={sparxColor}
-                                        border="2px solid white"
-                                    />
-                                )}
-                            </Box>
-                        </Tooltip>
-                    );
-                })}
-            </Flex>
-        </Box>
-    );
-};
-
 const FarmStatsBanner: React.FC<FarmStatsBannerProps> = ({ data, isLoading }) => {
     const bg = useColorModeValue('orange.50', darkCardBg); // Lighter orange for light mode, dark for dark
     const headingColor = useColorModeValue('orange.700', accentColor);
@@ -154,18 +86,13 @@ const FarmStatsBanner: React.FC<FarmStatsBannerProps> = ({ data, isLoading }) =>
 
     return (
         <Box bg={bg} borderRadius="xl" p={5} mb={6} borderColor={borderColor} borderWidth="1px">
-            {/* Add Phase Timeline at the top */}
-            <PhaseTimeline 
-                currentPhase={data?.currentPhaseIndex} 
-                ratePerSecond={data?.currentRate}
-                phaseEndTimestamp={data?.currentPhaseEnd}
-            />
+            {/* Removed Phase Timeline */}
             
             <SimpleGrid columns={{ base: 1, sm: 2, md: 4 }} spacing={5}>
                 {/* Emission Rate */}
                 <Stat>
                     <StatLabel color={textColor}>Current Emission Rate</StatLabel>
-                    <Skeleton isLoaded={!isLoading && emissionRatePerDay !== null} minHeight="24px">
+                    <Skeleton isLoaded={!isLoading} minHeight="24px">
                         <StatNumber color={headingColor}>
                             {formatLargeNumber(emissionRatePerDay)} SPARX / Day
                         </StatNumber>
@@ -181,7 +108,7 @@ const FarmStatsBanner: React.FC<FarmStatsBannerProps> = ({ data, isLoading }) =>
                 {/* Current Phase End */}
                 <Stat>
                     <StatLabel color={textColor}>Current Phase Ends</StatLabel>
-                     <Skeleton isLoaded={!isLoading && phaseEndTimer !== '--:--:--'} minHeight="24px">
+                     <Skeleton isLoaded={!isLoading} minHeight="24px">
                         <StatNumber color={headingColor}>
                              {phaseEndTimer === 'Ready' ? 'Ended' : phaseEndTimer}
                         </StatNumber>
@@ -192,7 +119,7 @@ const FarmStatsBanner: React.FC<FarmStatsBannerProps> = ({ data, isLoading }) =>
                 {/* Minted Progress */}
                  <Stat>
                     <StatLabel color={textColor}>Farm Emissions Progress</StatLabel>
-                     <Skeleton isLoaded={!isLoading && data?.farmMinted !== undefined && data?.farmCap !== undefined} height="40px">
+                     <Skeleton isLoaded={!isLoading} height="40px">
                         <VStack align="stretch" spacing={1} mt={1}>
                              <Progress 
                                 value={mintedPercent}
@@ -215,7 +142,7 @@ const FarmStatsBanner: React.FC<FarmStatsBannerProps> = ({ data, isLoading }) =>
                 {/* Phase Completion */}
                 <Stat>
                     <StatLabel color={textColor}>Phase Completion</StatLabel>
-                    <Skeleton isLoaded={!isLoading && data?.percentComplete !== undefined} height="40px">
+                    <Skeleton isLoaded={!isLoading} height="40px">
                         <VStack align="stretch" spacing={1} mt={1}>
                             <Progress 
                                 value={data?.percentComplete ?? 0}

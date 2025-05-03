@@ -23,7 +23,7 @@ import { useAccount, useBalance } from 'wagmi';
 import { formatUnits } from 'viem';
 import { useMemo } from 'react';
 import { getAddressesForChain, isContractDeployed } from '../config/contracts';
-import { FaBook, FaEthereum, FaFire } from 'react-icons/fa';
+import { FaBook, FaEthereum } from 'react-icons/fa';
 
 // Define animations
 const fadeIn = keyframes`
@@ -31,23 +31,12 @@ const fadeIn = keyframes`
   to { opacity: 1; transform: translateY(0); }
 `;
 
-const pulse = keyframes`
-  0% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-  100% { transform: scale(1); }
-`;
-
-const glowEffect = keyframes`
-  0% { box-shadow: 0 0 5px #FF6937; }
-  50% { box-shadow: 0 0 15px #FF6937; }
-  100% { box-shadow: 0 0 5px #FF6937; }
-`;
-
 const Header: React.FC = () => {
     const headerBg = useColorModeValue('gray.800', 'gray.800'); // Consistent dark header
     const borderColor = useColorModeValue('gray.700', 'gray.700');
     const hoverBg = useColorModeValue('gray.700', 'gray.600');
     const fireColor = '#FF6937'; // Accent color
+    const linkColor = useColorModeValue('gray.300', 'gray.300'); // Changed from white to light gray
     const subtleGradient = 'linear-gradient(90deg, rgba(255,105,55,0.1) 0%, rgba(255,105,55,0.3) 100%)';
     
     const { address: userAddress, chain, isConnected } = useAccount();
@@ -123,6 +112,12 @@ const Header: React.FC = () => {
         return chain.name === 'Sepolia' ? 'Sepolia Testnet' : chain.name;
     }, [chain]);
 
+    // Function to truncate wallet address
+    const truncateAddress = (address: string) => {
+        if (!address) return '';
+        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    };
+
     return (
         <Box 
             borderBottomWidth="1px" 
@@ -138,10 +133,7 @@ const Header: React.FC = () => {
                     {/* Logo and Brand with animation */}
                     <Link href="https://burnxen.com" isExternal _hover={{ textDecoration: 'none' }}>
                         <HStack spacing={3}>
-                            <Box
-                                position="relative"
-                                animation={`${pulse} 3s infinite ease-in-out`}
-                            >
+                            <Box position="relative">
                                 <Image 
                                     src="/sparx-circle-logo.png" 
                                     alt="SPARX Logo" 
@@ -149,15 +141,6 @@ const Header: React.FC = () => {
                                     transition="transform 0.3s"
                                     _hover={{ transform: 'scale(1.1)' }}
                                 />
-                                <Box
-                                    position="absolute"
-                                    top="-5px"
-                                    right="-5px"
-                                    width="15px"
-                                    height="15px"
-                                >
-                                    <Icon as={FaFire} color={fireColor} boxSize="15px" />
-                                </Box>
                             </Box>
                             <Heading 
                                 size={{ base: 'sm', md: 'md' }} 
@@ -182,6 +165,7 @@ const Header: React.FC = () => {
                             fontSize={{ base: 'sm', md: 'md' }} 
                             position="relative"
                             transition="transform 0.3s"
+                            color={linkColor}
                             _hover={{ 
                                 color: fireColor, 
                                 textDecoration: 'none',
@@ -206,12 +190,13 @@ const Header: React.FC = () => {
                             BurnXen.com
                         </Link>
                         <Link 
-                            href="https://x.com/burnmorexen" 
+                            href="https://x.com/BurnMoreXen" 
                             isExternal 
                             fontWeight="bold" 
                             fontSize={{ base: 'sm', md: 'md' }} 
                             position="relative"
                             transition="transform 0.3s"
+                            color={linkColor}
                             _hover={{ 
                                 color: fireColor, 
                                 textDecoration: 'none',
@@ -236,12 +221,13 @@ const Header: React.FC = () => {
                             X
                         </Link>
                         <Link 
-                            href="https://t.me/burnmorexen" 
+                            href="https://t.me/BurnMoreXen" 
                             isExternal 
                             fontWeight="bold" 
                             fontSize={{ base: 'sm', md: 'md' }} 
                             position="relative"
                             transition="transform 0.3s"
+                            color={linkColor}
                             _hover={{ 
                                 color: fireColor, 
                                 textDecoration: 'none',
@@ -266,7 +252,7 @@ const Header: React.FC = () => {
                             TG
                         </Link>
                         <Link 
-                            href="https://docs.burnxen.com" 
+                            href="https://xenburner.gitbook.io/sparx" 
                             isExternal 
                             fontWeight="bold" 
                             fontSize={{ base: 'sm', md: 'md' }} 
@@ -274,6 +260,7 @@ const Header: React.FC = () => {
                             alignItems="center"
                             position="relative"
                             transition="transform 0.3s"
+                            color={linkColor}
                             _hover={{ 
                                 color: fireColor, 
                                 textDecoration: 'none',
@@ -315,24 +302,19 @@ const Header: React.FC = () => {
                         </Badge>
                     )}
                     
-                    {/* Token Balances - Enhanced with animations and better styling */}
+                    {/* Token Balances - Enhanced with better styling */}
                     {userAddress && (
                         <HStack 
-                            spacing={4} 
+                            spacing={3} 
                             mr={4} 
                             display={{ base: 'none', md: 'flex' }}
-                            bg="gray.700" 
+                            bg="gray.800" 
                             p={2} 
                             px={3}
                             borderRadius="md"
-                            boxShadow="sm"
-                            animation={`${fadeIn} 0.4s ease-out forwards`}
-                            sx={{
-                                ...(isConnected && {
-                                    animation: `${glowEffect} 2s infinite`,
-                                    transition: "box-shadow 0.3s ease"
-                                })
-                            }}
+                            borderWidth="1px"
+                            borderColor="gray.700"
+                            boxShadow="0px 2px 4px rgba(0,0,0,0.2)"
                         >
                             <Tooltip 
                                 label={`SPARX: ${sparxFormattedBalance} (${sparxUsdValue})`} 
@@ -344,22 +326,18 @@ const Header: React.FC = () => {
                                     py={1} 
                                     px={2} 
                                     borderRadius="md" 
-                                    _hover={{ bg: 'gray.600' }}
+                                    _hover={{ transform: 'translateY(-2px)', transition: 'transform 0.2s' }}
                                     transition="all 0.2s"
-                                    bgGradient={subtleGradient}
+                                    bgGradient="linear(to-r, #FF6937, #FFA500)"
                                 >
                                     <Image 
                                         src="/sparx-circle-logo.png" 
-                                        boxSize="20px" 
-                                        mr={1} 
-                                        transition="transform 0.3s"
-                                        _hover={{ transform: 'scale(1.1)' }}
+                                        boxSize="18px" 
+                                        mr={1}
                                     />
-                                    <Text fontSize="sm" fontWeight="bold">{sparxFormattedBalance}</Text>
+                                    <Text fontSize="sm" fontWeight="bold" color="white">{sparxFormattedBalance}</Text>
                                 </HStack>
                             </Tooltip>
-                            
-                            <Divider orientation="vertical" h="20px" />
                             
                             <Tooltip 
                                 label={`XBURN: ${xburnFormattedBalance} (${xburnUsdValue})`} 
@@ -371,22 +349,18 @@ const Header: React.FC = () => {
                                     py={1} 
                                     px={2} 
                                     borderRadius="md" 
-                                    _hover={{ bg: 'gray.600' }}
+                                    _hover={{ transform: 'translateY(-2px)', transition: 'transform 0.2s' }}
                                     transition="all 0.2s"
-                                    bgGradient={subtleGradient}
+                                    bgGradient="linear(to-r, #E53E3E, #FF6937)"
                                 >
                                     <Image 
                                         src="/logo192.png" 
-                                        boxSize="20px" 
-                                        mr={1} 
-                                        transition="transform 0.3s"
-                                        _hover={{ transform: 'scale(1.1)' }}
+                                        boxSize="18px" 
+                                        mr={1}
                                     />
-                                    <Text fontSize="sm" fontWeight="bold">{xburnFormattedBalance}</Text>
+                                    <Text fontSize="sm" fontWeight="bold" color="white">{xburnFormattedBalance}</Text>
                                 </HStack>
                             </Tooltip>
-                            
-                            <Divider orientation="vertical" h="20px" />
                             
                             <Tooltip 
                                 label={`ETH: ${ethFormattedBalance} (${ethUsdValue})`} 
@@ -398,31 +372,106 @@ const Header: React.FC = () => {
                                     py={1} 
                                     px={2} 
                                     borderRadius="md" 
-                                    _hover={{ bg: 'gray.600' }}
+                                    _hover={{ transform: 'translateY(-2px)', transition: 'transform 0.2s' }}
                                     transition="all 0.2s"
-                                    bgGradient={subtleGradient}
+                                    bgGradient="linear(to-r, #3182CE, #63B3ED)"
                                 >
                                     <Icon 
                                         as={FaEthereum} 
-                                        color="blue.400" 
-                                        boxSize="18px" 
+                                        color="white" 
+                                        boxSize="16px" 
                                         mr={1}
-                                        transition="transform 0.3s"
-                                        _hover={{ transform: 'scale(1.1)' }}
                                     />
-                                    <Text fontSize="sm" fontWeight="bold">{ethFormattedBalance}</Text>
+                                    <Text fontSize="sm" fontWeight="bold" color="white">{ethFormattedBalance}</Text>
                                 </HStack>
                             </Tooltip>
                         </HStack>
                     )}
 
-                    {/* Connect Button */}
+                    {/* Connect Button with Customized RainbowKit */}
                     <Box>
-                        <ConnectButton 
-                            accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }}
-                            chainStatus="icon" 
-                            showBalance={false} 
-                        />
+                        <ConnectButton.Custom>
+                            {({
+                                account,
+                                chain,
+                                openAccountModal,
+                                openChainModal,
+                                openConnectModal,
+                                mounted,
+                            }) => {
+                                const ready = mounted;
+                                const connected = ready && account && chain;
+                                
+                                return (
+                                    <div
+                                        {...(!ready && {
+                                            'aria-hidden': true,
+                                            style: {
+                                                opacity: 0,
+                                                pointerEvents: 'none',
+                                                userSelect: 'none',
+                                            },
+                                        })}
+                                    >
+                                        {(() => {
+                                            if (!connected) {
+                                                return (
+                                                    <Button 
+                                                        onClick={openConnectModal} 
+                                                        colorScheme="orange"
+                                                        size="sm"
+                                                    >
+                                                        Connect Wallet
+                                                    </Button>
+                                                );
+                                            }
+                                            
+                                            return (
+                                                <HStack>
+                                                    <Button
+                                                        onClick={openChainModal}
+                                                        size="sm"
+                                                        variant="outline"
+                                                        colorScheme="gray"
+                                                        mr={2}
+                                                    >
+                                                        {chain.hasIcon && (
+                                                            <Box
+                                                                style={{
+                                                                    background: chain.iconBackground,
+                                                                    width: 16,
+                                                                    height: 16,
+                                                                    borderRadius: 999,
+                                                                    overflow: 'hidden',
+                                                                    marginRight: 4,
+                                                                }}
+                                                            >
+                                                                {chain.iconUrl && (
+                                                                    <img
+                                                                        alt={chain.name ?? 'Chain icon'}
+                                                                        src={chain.iconUrl}
+                                                                        style={{ width: 16, height: 16 }}
+                                                                    />
+                                                                )}
+                                                            </Box>
+                                                        )}
+                                                        {chain.name}
+                                                    </Button>
+                                                    
+                                                    <Button
+                                                        onClick={openAccountModal}
+                                                        size="sm"
+                                                        colorScheme="orange"
+                                                    >
+                                                        {account.displayName || truncateAddress(account.address)}
+                                                    </Button>
+                                                </HStack>
+                                            );
+                                        })()}
+                                    </div>
+                                );
+                            }}
+                        </ConnectButton.Custom>
                     </Box>
                 </Flex>
             </Container>

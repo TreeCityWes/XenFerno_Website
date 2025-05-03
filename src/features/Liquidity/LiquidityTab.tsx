@@ -1,5 +1,5 @@
 import React from 'react'
-import { Box, VStack, Heading, Text, SimpleGrid } from '@chakra-ui/react'
+import { Box, VStack, Heading, Text, SimpleGrid, Card, CardBody, Flex, Icon, Image, Grid, List, ListItem, Center } from '@chakra-ui/react'
 import { useMemo, useState, useEffect } from 'react'
 import PoolCard from './PoolCard'
 import { LiquidityPool } from './types'
@@ -9,6 +9,7 @@ import erc20Abi from '../../abis/ERC20.json' with { type: 'json' }
 import farmAbi from '../../abis/SparxFarm.json' with { type: 'json' }
 import { formatUnits, type Abi, zeroAddress, Address } from 'viem'
 import { sepolia } from 'wagmi/chains'
+import { InfoIcon, WarningIcon } from '@chakra-ui/icons'
 
 // Correct ABI typing
 const erc20AbiTyped = erc20Abi as unknown as Abi;
@@ -130,7 +131,7 @@ function LiquidityTab({ isActive }: TabProps) {
       return farmAddr && isContractDeployed(farmAddr) ? farmAddr as Address : zeroAddress;
   }, [currentAddresses]);
   
-  // Get dynamic pool definitions
+  // Get dynamic pool definitions (Memoize this)
   const currentStaticPools = useMemo(() => getStaticPoolDefinitions(currentAddresses), [currentAddresses]);
 
   // Derive token addresses needed for price calculation (moved outside poolsWithData memo)
@@ -151,8 +152,8 @@ function LiquidityTab({ isActive }: TabProps) {
     // Add calls for Farm general data (only once)
     // Check if farm address is deployed
     if (farmAddress !== zeroAddress) { 
-      calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'sparxPerBlock', chainId: chain.id, dataType: 'farmSparxPerBlock' });
-      calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'totalAllocPoint', chainId: chain.id, dataType: 'farmTotalAllocPoint' });
+      calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'currentRate', chainId: chain.id, dataType: 'farmCurrentRate', poolName: '__farm__' });
+      calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'totalAllocPoint', chainId: chain.id, dataType: 'farmTotalAllocPoint', poolName: '__farm__' });
     }
 
     // Use dynamic pool definitions
@@ -218,12 +219,42 @@ function LiquidityTab({ isActive }: TabProps) {
 
   // Add state for farm data
   const [farmData, setFarmData] = useState<{
-    sparxPerBlock: bigint | null;
+    currentRate: bigint | null;
     totalAllocPoint: bigint | null;
   }>({
-    sparxPerBlock: null,
+    currentRate: null,
     totalAllocPoint: null
   });
+
+  // === Process Farm Data Separate Effect ===
+  useEffect(() => {
+    if (!readResults || !contractsToRead) return;
+
+    let newCurrentRate: bigint | null = null;
+    let newTotalAllocPoint: bigint | null = null;
+
+    readResults.forEach((result: any, index: number) => {
+      if (index >= contractsToRead.length) return;
+      const contractCall = contractsToRead[index];
+      if (!contractCall || result.status === 'failure') return;
+
+      // Directly check dataType for farm data
+      if (contractCall.dataType === 'farmCurrentRate') {
+        newCurrentRate = result.result as bigint | null;
+      } else if (contractCall.dataType === 'farmTotalAllocPoint') {
+        newTotalAllocPoint = result.result as bigint | null;
+      }
+    });
+
+    // Update state only if values changed
+    setFarmData(prev => {
+        if (prev.currentRate !== newCurrentRate || prev.totalAllocPoint !== newTotalAllocPoint) {
+            return { currentRate: newCurrentRate, totalAllocPoint: newTotalAllocPoint };
+        }
+        return prev; // No change needed
+    });
+
+  }, [readResults, contractsToRead]); // Depend only on readResults and contractsToRead
 
   // === Process Results ===
   const poolsWithData: LiquidityPool[] = useMemo(() => {
@@ -281,12 +312,18 @@ function LiquidityTab({ isActive }: TabProps) {
       const dataType = contractCall.dataType;
 
       if (!poolName) {
-        console.warn(`Original contract call at index ${index} missing poolName:`, contractCall);
+        // Skip farm-specific data - it's handled in the separate useEffect
+        if (dataType === 'farmCurrentRate' || dataType === 'farmTotalAllocPoint') {
+           return;
+        }
+        
+        // If it's not farm data and has no poolName, log the warning
+        console.warn(`Original contract call at index ${index} missing poolName and not farm-specific:`, contractCall);
         return;
       }
       
-      if (!dataType) {
-        console.warn(`Original contract call at index ${index} missing dataType:`, contractCall);
+      // If it's farm data, skip - it's handled in the separate useEffect
+      if (poolName === '__farm__') {
         return;
       }
 
@@ -299,12 +336,7 @@ function LiquidityTab({ isActive }: TabProps) {
 
       // --- Assign data based on dataType --- 
       switch (dataType) {
-        case 'farmSparxPerBlock':
-          setFarmData(prev => ({ ...prev, sparxPerBlock: result.result }));
-          break;
-        case 'farmTotalAllocPoint':
-          setFarmData(prev => ({ ...prev, totalAllocPoint: result.result }));
-          break;
+        // Remove farmData handling from here - it's now in the dedicated useEffect
         case 'displayPoolReserves':
         case 'pricingPairReserves': // Handle both regular and pricing pairs the same way
           if (Array.isArray(result.result) && result.result.length >= 2) {
@@ -377,17 +409,26 @@ function LiquidityTab({ isActive }: TabProps) {
 
         // Calculate APR if we have all required data
         let apr: number | null = null;
-        if (farmData.sparxPerBlock && farmData.totalAllocPoint && processedData.allocPoint && farmData.totalAllocPoint > 0n) { 
+        const SECONDS_PER_YEAR = 31536000; // Use seconds per year
+        
+        if (farmData.currentRate && farmData.totalAllocPoint && processedData.allocPoint && farmData.totalAllocPoint > 0n) { // Check for currentRate
           try {
             const allocPoint = typeof processedData.allocPoint === 'bigint' 
               ? processedData.allocPoint 
               : BigInt(processedData.allocPoint || 0);
               
             if (allocPoint > 0n) {
-              const poolRewardPerBlock = (farmData.sparxPerBlock * allocPoint) / farmData.totalAllocPoint;
-              const yearlyRewardInSparxRaw = poolRewardPerBlock * BigInt(BLOCKS_PER_YEAR);
+              // Calculate rewards per second for the pool
+              const poolRewardPerSecond = (farmData.currentRate * allocPoint) / farmData.totalAllocPoint;
+              const yearlyRewardInSparxRaw = poolRewardPerSecond * BigInt(SECONDS_PER_YEAR);
               const yearlyRewardInSparx = parseFloat(formatUnits(yearlyRewardInSparxRaw, 18));
-              apr = (yearlyRewardInSparx / Number(allocPoint)) * 100;
+              
+              // --- APR Calculation requires Pool Value --- 
+              // Placeholder: APR calculation needs the total value of the LP pool.
+              // For now, we'll set APR to null until pricing logic is fully integrated.
+              // apr = (yearlyRewardInSparx * SPARX_PRICE / POOL_VALUE) * 100; 
+              // console.log(`APR Calc: yearlyReward=${yearlyRewardInSparx}, poolValue=PLACEHOLDER`);
+              apr = null; // Temporarily disable APR until pool value is available
             }
           } catch (error) {
             console.error("Error calculating APR:", error);
@@ -414,7 +455,7 @@ function LiquidityTab({ isActive }: TabProps) {
       });
       
       return finalPools;
-    }, [readResults, contractsToRead, currentStaticPools, currentAddresses, farmData]);
+    }, [readResults, currentStaticPools, farmData, contractsToRead]); // Note: keeping contractsToRead in dependencies
 
   return (
     <VStack align="stretch" spacing={6}>
@@ -433,6 +474,89 @@ function LiquidityTab({ isActive }: TabProps) {
           />
         ))}
       </SimpleGrid>
+      
+      {/* Liquidity Information Card */}
+      <Card bg="#1a202c" borderColor="gray.700" variant="outline" mt={6} overflow="hidden">
+        <CardBody p={6}>
+          <VStack spacing={6} align="center">
+            {/* Fox with Sunglasses Mascot */}
+            <Box mb={2}>
+              <Image 
+                src="/sparx-shades.png" 
+                alt="Sparx Fox with Sunglasses" 
+                width="200px"
+                height="200px"
+                objectFit="contain"
+              />
+            </Box>
+            
+            {/* Information Sections - Side by Side */}
+            <Grid templateColumns={{ base: "1fr", md: "1fr 1fr" }} gap={{ base: 6, md: 10 }} w="full" maxW="900px">
+              {/* Liquidity Benefits Section */}
+              <Box>
+                <Flex align="center" mb={4}>
+                  <Icon as={InfoIcon} color="#FF6937" boxSize={5} mr={2} />
+                  <Heading size="md" color="#FF6937">Liquidity Provider Benefits</Heading>
+                </Flex>
+                
+                <Text fontSize="md" color="gray.200" mb={4} pl={1}>
+                  Providing liquidity has several advantages:
+                </Text>
+                
+                <List spacing={3} pl={1}>
+                  <ListItem color="gray.200" fontSize="md" display="flex">
+                    <Text as="span" mr={2}>•</Text>
+                    <Text>Earn 0.3% of all trading fees from swaps in the pool</Text>
+                  </ListItem>
+                  <ListItem color="gray.200" fontSize="md" display="flex">
+                    <Text as="span" mr={2}>•</Text>
+                    <Text>Stake LP tokens in farms for additional SPARX rewards</Text>
+                  </ListItem>
+                  <ListItem color="gray.200" fontSize="md" display="flex">
+                    <Text as="span" mr={2}>•</Text>
+                    <Text>Help increase token liquidity and reduce price impact</Text>
+                  </ListItem>
+                </List>
+                
+                <Text fontSize="md" color="gray.200" mt={4} pl={1}>
+                  LP tokens represent your share of the pool and can be withdrawn anytime.
+                </Text>
+              </Box>
+              
+              {/* Impermanent Loss Section */}
+              <Box>
+                <Flex align="center" mb={4}>
+                  <Icon as={WarningIcon} color="#38bdf8" boxSize={5} mr={2} />
+                  <Heading size="md" color="#38bdf8">Understanding Risks</Heading>
+                </Flex>
+                
+                <Text fontSize="md" color="gray.200" mb={4} pl={1}>
+                  Important considerations for liquidity providers:
+                </Text>
+                
+                <List spacing={3} pl={1}>
+                  <ListItem color="gray.200" fontSize="md" display="flex">
+                    <Text as="span" mr={2}>•</Text>
+                    <Text>Impermanent loss may occur if token prices change significantly</Text>
+                  </ListItem>
+                  <ListItem color="gray.200" fontSize="md" display="flex">
+                    <Text as="span" mr={2}>•</Text>
+                    <Text>Always provide equal value of both tokens</Text>
+                  </ListItem>
+                  <ListItem color="gray.200" fontSize="md" display="flex">
+                    <Text as="span" mr={2}>•</Text>
+                    <Text>Higher trading volume means more fees earned</Text>
+                  </ListItem>
+                </List>
+                
+                <Text fontSize="md" color="gray.200" mt={4} pl={1}>
+                  For maximum returns, stake your LP tokens in our farm pools.
+                </Text>
+              </Box>
+            </Grid>
+          </VStack>
+        </CardBody>
+      </Card>
     </VStack>
   )
 }

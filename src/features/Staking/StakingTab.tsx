@@ -1,4 +1,4 @@
-import { Box, VStack, Heading, Text, SimpleGrid, Alert, AlertIcon, AlertTitle, Center, Spinner } from '@chakra-ui/react'
+import { Box, VStack, Heading, Text, SimpleGrid, Alert, AlertIcon, AlertTitle, Center, Spinner, Flex, Card, CardBody, Icon, Divider, HStack, Badge, Image, Grid, List, ListItem } from '@chakra-ui/react'
 import { useMemo, useEffect, useState } from 'react'
 // Use StakingPoolCard instead of FarmPoolCard
 import { StakingPoolCard } from './StakingPoolCard'
@@ -10,8 +10,45 @@ import { type Abi, zeroAddress } from 'viem'
 import farmAbi from '../../abis/SparxFarm.json' with { type: 'json' }
 import erc20Abi from '../../abis/ERC20.json' with { type: 'json' }
 // Reuse definitions from FarmTab
-import { FarmPoolCardData, PoolInfoInternal, PoolInfoContract } from '../Farm/FarmTab' // Import types
+import { PoolInfoInternal, PoolInfoContract } from '../Farm/FarmTab' // Import types
 import { mapLpAddressToInfo } from '../../utils/poolUtils'; // Import helper from new location
+import { InfoIcon, LockIcon, TimeIcon, UnlockIcon } from '@chakra-ui/icons'
+
+// Define theme colors used in this tab (match StakingPoolCard for consistency)
+const darkCardBg = '#252f3f';           // Card background from screenshot
+const darkInputBg = '#1e293b';          // Input/Tab background from screenshot
+const borderColor = '#374151';          // Border color from screenshot
+const lightTextColor = '#e5e7eb';       // Lighter text color for main values
+const subtleTextColor = '#9ca3af';      // Dimmer text color for labels/helpers
+const infoIconColor = '#eab308';        // Gold for Info icon
+const cooldownIconColor = '#38bdf8';     // Light blue for Cooldown icon
+const lockIconColor = '#FF6937';        // Orange for Lock icon
+const lockedBadgeBg = '#b91c1c';        // Red background for LOCKED badge
+
+// Define types for lock options from contract
+interface LockOption {
+  duration: bigint;
+  bonusMultiplier: bigint;
+}
+
+interface UserLockInfo {
+  chosenBonusMultiplier: bigint;
+  unlockTimestamp: bigint;
+  secondsRemaining: bigint;
+}
+
+// Define type for the farm pool card data with optional lock options
+interface FarmPoolCardData {
+  poolInfo: PoolInfoInternal;
+  walletBalance: bigint | null;
+  allowance: bigint | null;
+  pendingRewards: bigint | null;
+  stakedBalance: bigint | null;
+  cooldownInfo: any | null;
+  lockInfo: UserLockInfo | null;
+  lockOptions: LockOption[];
+  distributionShare?: bigint | null;
+}
 
 // Type ABIs
 const farmAbiTyped = farmAbi as Abi;
@@ -160,6 +197,7 @@ function StakingTab({ isActive }: TabProps) {
                     { address: farmAddress, abi: farmAbiTyped, functionName: 'pendingRewards', args: [BigInt(pid), userAddress], chainId: chain.id, poolPid: pid, dataType: 'pendingRewards' },
                     { address: farmAddress, abi: farmAbiTyped, functionName: 'userInfo', args: [BigInt(pid), userAddress], chainId: chain.id, poolPid: pid, dataType: 'userInfo' },
                     { address: farmAddress, abi: farmAbiTyped, functionName: 'userCooldownInfo', args: [BigInt(pid), userAddress], chainId: chain.id, poolPid: pid, dataType: 'cooldownInfo' },
+                    { address: farmAddress, abi: farmAbiTyped, functionName: 'getUserStakeInfo', args: [BigInt(pid), userAddress], chainId: chain.id, poolPid: pid, dataType: 'lockInfo' },
                 ];
                 newUserCalls.push(...callsToAdd);
             }
@@ -216,6 +254,29 @@ function StakingTab({ isActive }: TabProps) {
                           currentData.cooldownInfo = null;
                        }
                        break;
+                   case 'lockInfo':
+                       if (Array.isArray(value) && value.length >= 4) {
+                           // First three items are user's stake info
+                           currentData.lockInfo = {
+                               chosenBonusMultiplier: value[0] as bigint,
+                               unlockTimestamp: value[1] as bigint,
+                               secondsRemaining: value[2] as bigint
+                           };
+                           
+                           // Fourth item is array of lock options
+                           if (Array.isArray(value[3])) {
+                               currentData.lockOptions = value[3].map((option: any) => ({
+                                   duration: option.duration as bigint,
+                                   bonusMultiplier: option.bonusMultiplier as bigint
+                               }));
+                               console.log(`StakingTab: Found ${currentData.lockOptions.length} lock options for PID ${pid}`, currentData.lockOptions);
+                           }
+                       } else {
+                           console.warn(`StakingTab: Unexpected getUserStakeInfo structure for PID ${pid}`, value);
+                           currentData.lockInfo = null;
+                           currentData.lockOptions = [];
+                       }
+                       break;
               }
               // Update map entry
               currentMap.set(pid, currentData);
@@ -257,29 +318,117 @@ function StakingTab({ isActive }: TabProps) {
       </Box>
       
       {!isConnected ? (
-        <Center p={10}><VStack><Text fontSize="lg">Connect your wallet to view staking pools</Text><ConnectButton /></VStack></Center>
-      ) : isLoading && processedStakingData.length === 0 ? ( // Check length of array
-        <Center p={10}><Spinner size="xl" /></Center>
+        <Center p={10}>
+          <VStack spacing={4}>
+            <Text fontSize="lg">Connect your wallet to view staking pools</Text>
+            <ConnectButton />
+          </VStack>
+        </Center>
+      ) : isLoading && processedStakingData.length === 0 ? (
+        <Center p={10}>
+          <Spinner size="xl" />
+        </Center>
       ) : combinedError ? (
-          <Alert status="error" borderRadius="md"><AlertIcon /><AlertTitle>Error fetching staking data: {combinedError.message}</AlertTitle></Alert>
-      ) : processedStakingData.length > 0 ? ( // Check length of array
-        <SimpleGrid columns={{ base: 1, md: stakingPools.length > 1 ? 2 : 1 }} spacing={4}> {/* Adjust columns based on pool count */}
-           {/* Map over the array to render cards */}
-           {processedStakingData.map(poolData => (
-               <StakingPoolCard 
-                 key={poolData.poolInfo.pid}
-                 data={poolData}
-                 farmAddress={farmAddress}
-                 farmAbi={farmAbiTyped}
-                 onSuccessfulTx={handleSuccess}
-                 totalAllocPoint={staticResults?.[1]?.status === 'success' ? staticResults[1].result as bigint : BigInt(0)}
-                 currentRate={staticResults?.[2]?.status === 'success' ? staticResults[2].result as bigint : BigInt(0)}
-                 distributionShare={poolData.distributionShare ?? null}
-               />
-           ))}
-        </SimpleGrid>
+        <Alert status="error" borderRadius="md">
+          <AlertIcon />
+          <AlertTitle>Error fetching staking data: {combinedError.message}</AlertTitle>
+        </Alert>
+      ) : processedStakingData.length > 0 ? (
+        <>
+          <SimpleGrid columns={{ base: 1, md: processedStakingData.length > 1 ? 2 : 1 }} spacing={4}>
+            {processedStakingData.map(poolData => (
+              <StakingPoolCard 
+                key={poolData.poolInfo.pid}
+                data={poolData}
+                farmAddress={farmAddress}
+                farmAbi={farmAbiTyped}
+                onSuccessfulTx={handleSuccess}
+                totalAllocPoint={staticResults?.[1]?.status === 'success' ? staticResults[1].result as bigint : BigInt(0)}
+                currentRate={staticResults?.[2]?.status === 'success' ? staticResults[2].result as bigint : BigInt(0)}
+                distributionShare={poolData.distributionShare ?? null}
+              />
+            ))}
+          </SimpleGrid>
+          
+          {/* Staking Information Card - Now below the pool cards */}
+          <Card bg="#1a202c" borderColor="gray.700" variant="outline" mt={6} overflow="hidden">
+            <CardBody p={6}>
+              <VStack spacing={6} align="center">
+                {/* Rocket Fox Mascot */}
+                <Box mb={2}>
+                  <Image 
+                    src="/sparx-rocket.png" 
+                    alt="Sparx Rocket" 
+                    width="200px"
+                    height="200px"
+                    objectFit="contain"
+                  />
+                </Box>
+                
+                {/* Information Sections - Side by Side */}
+                <Grid templateColumns={{ base: "1fr", md: "1fr 1fr" }} gap={{ base: 6, md: 10 }} w="full" maxW="900px">
+                  {/* Lock Period Section FIRST */}
+                  <Box>
+                    <Flex align="center" mb={4}>
+                      <Icon as={LockIcon} color="#FF6937" boxSize={5} mr={2} />
+                      <Heading size="md" color="#FF6937">Lock Periods</Heading>
+                    </Flex>
+                    
+                    <Text fontSize="md" color="gray.200" mb={4} pl={1}>
+                      Locking your stake increases your rewards. Longer lock periods offer better bonuses:
+                    </Text>
+                    
+                    <List spacing={3} pl={1}>
+                      <ListItem color="gray.200" fontSize="md" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>7 days: +50% reward boost</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="md" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>14 days: +100% reward boost</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="md" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>30 days: +200% reward boost</Text>
+                      </ListItem>
+                    </List>
+                  </Box>
+                  
+                  {/* Cooldown Section SECOND */}
+                  <Box>
+                    <Flex align="center" mb={4}>
+                      <Icon as={TimeIcon} color="#38bdf8" boxSize={5} mr={2} />
+                      <Heading size="md" color="#38bdf8">Cooldown Periods</Heading>
+                    </Flex>
+                    
+                    <Text fontSize="md" color="gray.200" mb={4} pl={1}>
+                      After each action, a cooldown period applies:
+                    </Text>
+                    
+                    <List spacing={3} pl={1}>
+                      <ListItem color="gray.200" fontSize="md" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Stake/Harvest: 1 hour cooldown</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="md" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Withdraw: 30 minute cooldown</Text>
+                      </ListItem>
+                    </List>
+                    
+                    <Text fontSize="md" color="gray.200" mt={4} pl={1}>
+                      Cooldowns prevent flash loan attacks and maintain reward stability.
+                    </Text>
+                  </Box>
+                </Grid>
+              </VStack>
+            </CardBody>
+          </Card>
+        </>
       ) : (
-         <Center p={10}><Text fontSize="lg">No SPARX or XBURN staking pool found for this network.</Text></Center> // Updated message
+        <Center p={10}>
+          <Text fontSize="lg">No SPARX or XBURN staking pool found for this network.</Text>
+        </Center>
       )}
     </VStack>
   )

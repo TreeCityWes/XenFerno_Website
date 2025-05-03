@@ -1,4 +1,4 @@
-import { Box, VStack, Heading, Text, SimpleGrid, Alert, AlertIcon, AlertTitle, Center, Spinner } from '@chakra-ui/react'
+import { Box, VStack, Heading, Text, SimpleGrid, Alert, AlertIcon, AlertTitle, Center, Spinner, Card, CardBody, Flex, Icon, HStack, Image, Grid, List, ListItem } from '@chakra-ui/react'
 import { useMemo, useEffect, useState } from 'react'
 import { FarmPoolCard } from './FarmPoolCard'
 import { useAccount, useReadContracts } from 'wagmi'
@@ -7,8 +7,8 @@ import { getAddressesForChain, Addresses, isContractDeployed } from '../../confi
 import { type Abi, zeroAddress, formatUnits, Address } from 'viem'
 import farmAbi from '../../abis/SparxFarm.json' with { type: 'json' }
 import erc20Abi from '../../abis/ERC20.json' with { type: 'json' }
-import FarmStatsBanner from './FarmStatsBanner'
 import { mapLpAddressToInfo } from '../../utils/poolUtils'
+import { LockIcon, TimeIcon, InfoIcon } from '@chakra-ui/icons'
 
 // Type ABIs
 const farmAbiTyped = farmAbi as Abi;
@@ -140,14 +140,19 @@ function FarmTab({ isActive }: TabProps) {
     let newDistributionInfo: any = null;
 
     staticResults.forEach((result, index) => {
-      if (result.status !== 'success') return;
+      if (result.status !== 'success') {
+        console.error(`Static contract call failed at index ${index}:`, result.error || 'Unknown error');
+        return;
+      }
 
       switch (index) {
         case 0: // poolLength
           newPoolCount = Number(result.result);
+          console.log(`Processing poolLength: ${newPoolCount}`);
           break;
         case 1: // getPoolDistributionInfo
           if (Array.isArray(result.result) && result.result.length > 0) {
+            console.log("Processing pool distribution info:", result.result);
             newDistributionInfo = {
               count: result.result[0] as bigint,
               addresses: result.result[1] as Address[],
@@ -155,31 +160,39 @@ function FarmTab({ isActive }: TabProps) {
               supplies: result.result[3] as bigint[],
               shares: result.result[4] as bigint[],
             };
+          } else {
+            console.error("Invalid pool distribution info format:", result.result);
           }
           break;
         case 2: // getFarmInfo - New V2 function
           if (result.result && typeof result.result === 'object') {
+            console.log("Processing farm info:", result.result);
             const farmInfo = result.result as any;
             newFarmStats = {
               ...newFarmStats,
-              farmCap: farmInfo.farmCap,
-              farmMinted: farmInfo.minted,
-              currentRate: farmInfo.currentEmissionRate,
-              depositsEnabled: farmInfo.isDepositsEnabled,
-              hasNewFarm: farmInfo.hasNewFarm
+              farmCap: farmInfo.farmCap || 0n,
+              farmMinted: farmInfo.minted || 0n,
+              currentRate: farmInfo.currentEmissionRate || 0n,
+              depositsEnabled: farmInfo.isDepositsEnabled ?? true,
+              hasNewFarm: farmInfo.hasNewFarm ?? false
             };
+          } else {
+            console.error("Invalid farm info format:", result.result);
           }
           break;
         case 3: // getEmissionPhaseInfo - New V2 function
           if (result.result && typeof result.result === 'object') {
+            console.log("Processing emission phase info:", result.result);
             const phaseInfo = result.result as any;
             newFarmStats = {
               ...newFarmStats,
-              currentPhaseIndex: Number(phaseInfo.currentPhaseIndex),
-              currentPhaseEnd: phaseInfo.currentPhaseEnd,
-              secondsRemaining: phaseInfo.secondsRemaining,
-              percentComplete: Number(phaseInfo.percentComplete)
+              currentPhaseIndex: Number(phaseInfo.currentPhaseIndex) || 0,
+              currentPhaseEnd: phaseInfo.currentPhaseEnd || 0n,
+              secondsRemaining: phaseInfo.secondsRemaining || 0n,
+              percentComplete: Number(phaseInfo.percentComplete) || 0
             };
+          } else {
+            console.error("Invalid emission phase info format:", result.result);
           }
           break;
       }
@@ -188,6 +201,9 @@ function FarmTab({ isActive }: TabProps) {
     setPoolCount(newPoolCount);
     setFarmStats((prev: FarmStatsData | null) => ({ ...(prev || {}), ...newFarmStats }) as FarmStatsData);
     setRawDistributionInfo(newDistributionInfo);
+    
+    console.log("Updated farm stats:", newFarmStats);
+    console.log("Updated distribution info:", newDistributionInfo);
   }, [staticResults, staticContracts]);
 
   // === Derive Pool Structures and Setup User Data Calls ===
@@ -277,9 +293,9 @@ function FarmTab({ isActive }: TabProps) {
             args: [BigInt(pid), userAddress], chainId: chain.id, poolPid: pid, dataType: 'userInfoFetch'
           });
           
-          // Add lock info call
+          // Add lock info call - Use getUserStakeInfo instead of getUserLockInfo
           newUserCalls.push({
-            address: farmAddress, abi: farmAbiTyped, functionName: 'getUserLockInfo',
+            address: farmAddress, abi: farmAbiTyped, functionName: 'getUserStakeInfo',
             args: [BigInt(pid), userAddress], chainId: chain.id, poolPid: pid, dataType: 'lockInfoFetch'
           });
           
@@ -351,13 +367,25 @@ function FarmTab({ isActive }: TabProps) {
 
           userDataResults.forEach((result, index) => {
               const contractCall = userDataCalls[index];
-              if (!contractCall || result.status !== 'success') return;
+              if (!contractCall) {
+                console.error(`No contract call found at index ${index}`);
+                return;
+              }
+              
+              if (result.status !== 'success') {
+                console.error(`Contract call failed at index ${index}:`, result.error || 'Unknown error');
+                return;
+              }
 
               const pid = contractCall.poolPid;
               const currentData = currentMap.get(pid);
-              if (!currentData) return;
+              if (!currentData) {
+                console.error(`No data found for PID ${pid} in dataMap`);
+                return;
+              }
 
               const value = result.result;
+              console.log(`Processing result for PID ${pid}, dataType: ${contractCall.dataType}`, value);
 
               switch (contractCall.dataType) {
                   case 'walletBalance':
@@ -370,7 +398,22 @@ function FarmTab({ isActive }: TabProps) {
                       if (typeof value === 'bigint') currentData.pendingRewards = value;
                       break;
                   case 'userInfoFetch':
-                      if (Array.isArray(value) && value.length >= 7 && typeof value[0] === 'bigint') {
+                      // Handle different possible return formats to maximize compatibility
+                      if (typeof value === 'object') {
+                        // Object format (newer contracts, structured return)
+                        if (value && 'amount' in value) {
+                          currentData.stakedBalance = value.amount as bigint;
+                          currentData.userInfo = {
+                            rewardDebt: ('rewardDebt' in value) ? value.rewardDebt as bigint : 0n,
+                            lastActionTimestamp: ('lastActionTimestamp' in value) ? value.lastActionTimestamp as bigint : 0n,
+                            lastActionBlock: ('lastActionBlock' in value) ? value.lastActionBlock as bigint : 0n,
+                            lastWithdrawTimestamp: ('lastWithdrawTimestamp' in value) ? value.lastWithdrawTimestamp as bigint : 0n, 
+                            actionsInBlock: ('actionsInBlock' in value) ? value.actionsInBlock as bigint : 0n,
+                            unlockTimestamp: ('unlockTimestamp' in value) ? value.unlockTimestamp as bigint : 0n,
+                          };
+                        } 
+                        // Array format (older contracts)
+                        else if (Array.isArray(value) && value.length >= 7 && typeof value[0] === 'bigint') {
                           currentData.stakedBalance = value[0];
                           currentData.userInfo = {
                               rewardDebt: value[1] as bigint,
@@ -380,23 +423,76 @@ function FarmTab({ isActive }: TabProps) {
                               actionsInBlock: value[5] as bigint,
                               unlockTimestamp: value[6] as bigint,
                           };
-                      } else {
+                        } else {
                           console.warn(`FarmTab: Unexpected userInfo structure for PID ${pid}`, value);
-                          currentData.stakedBalance = null;
-                          currentData.userInfo = null;
+                          // Still assign an empty object in case of unexpected format
+                          currentData.stakedBalance = 0n;
+                          currentData.userInfo = {
+                              rewardDebt: 0n,
+                              lastActionTimestamp: 0n,
+                              lastActionBlock: 0n,
+                              lastWithdrawTimestamp: 0n,
+                              actionsInBlock: 0n,
+                              unlockTimestamp: 0n,
+                          };
+                        }
+                      } else {
+                          console.warn(`FarmTab: Invalid userInfo format for PID ${pid}`, value);
+                          currentData.stakedBalance = 0n;
+                          currentData.userInfo = {
+                              rewardDebt: 0n,
+                              lastActionTimestamp: 0n,
+                              lastActionBlock: 0n,
+                              lastWithdrawTimestamp: 0n,
+                              actionsInBlock: 0n,
+                              unlockTimestamp: 0n,
+                          };
                       }
                       break;
                   case 'lockInfoFetch':
-                      if (Array.isArray(value) && value.length >= 4 && typeof value[0] === 'bigint') {
+                      // Process getUserStakeInfo response which returns:
+                      // chosenBonusMultiplier, userUnlockTimestamp, secondsRemaining, poolOptions
+                      if (Array.isArray(value) && value.length >= 3) {
+                          // Parse the data returned from getUserStakeInfo
+                          const chosenBonusMultiplier = typeof value[0] === 'bigint' ? value[0] : 10000n;
+                          const userUnlockTimestamp = typeof value[1] === 'bigint' ? value[1] : 0n;
+                          const secondsRemaining = typeof value[2] === 'bigint' ? value[2] : 0n;
+
                           currentData.lockInfo = {
-                              lockDuration: value[0] as bigint,
-                              bonusMultiplier: value[1] as bigint,
-                              userUnlockTimestamp: value[2] as bigint,
-                              secondsRemaining: value[3] as bigint,
+                              lockDuration: secondsRemaining, // Use seconds remaining as lockDuration
+                              bonusMultiplier: chosenBonusMultiplier,
+                              userUnlockTimestamp: userUnlockTimestamp,
+                              secondsRemaining: secondsRemaining,
                           };
+
+                          // Process cooldown information using user info data
+                          if (currentData.userInfo) {
+                              const now = BigInt(Math.floor(Date.now() / 1000));
+                              const lastAction = currentData.userInfo.lastActionTimestamp;
+                              const lastWithdraw = currentData.userInfo.lastWithdrawTimestamp;
+                              
+                              // Standard cooldown periods - take these from the contract constants
+                              const stakeCooldown = 3600n; // 1 hour (COOLDOWN constant in contract)
+                              const withdrawCooldown = 1800n; // 30 minutes (WITHDRAW_COOLDOWN constant in contract)
+                              
+                              currentData.cooldownInfo = {
+                                  lastActionTimestamp: lastAction,
+                                  lastWithdrawTimestamp: lastWithdraw,
+                                  cooldownEnds: lastAction + stakeCooldown,
+                                  withdrawCooldownEnds: lastWithdraw + withdrawCooldown,
+                                  isCooldownActive: now < lastAction + stakeCooldown,
+                                  isWithdrawCooldownActive: now < lastWithdraw + withdrawCooldown
+                              };
+                          }
                       } else {
-                          console.warn(`FarmTab: Unexpected userLockInfo structure for PID ${pid}`, value);
-                          currentData.lockInfo = null;
+                          console.warn(`FarmTab: Invalid getUserStakeInfo format for PID ${pid}`, value);
+                          // Set default values
+                          currentData.lockInfo = {
+                              lockDuration: 0n,
+                              bonusMultiplier: 10000n, // 1.0x multiplier (no bonus)
+                              userUnlockTimestamp: 0n,
+                              secondsRemaining: 0n,
+                          };
                       }
                       break;
                   case 'lpTotalSupply':
@@ -407,16 +503,6 @@ function FarmTab({ isActive }: TabProps) {
                           currentData.lpReserves = {
                               reserve0: value[0],
                               reserve1: value[1],
-                          };
-                      }
-                      break;
-                  case 'userLockInfo':
-                      if (Array.isArray(value) && value.length >= 4) {
-                          currentData.lockInfo = {
-                              lockDuration: value[0] as bigint,
-                              bonusMultiplier: value[1] as bigint,
-                              userUnlockTimestamp: value[2] as bigint,
-                              secondsRemaining: value[3] as bigint
                           };
                       }
                       break;
@@ -449,14 +535,6 @@ function FarmTab({ isActive }: TabProps) {
         <Text mb={4} color="gray.500">Stake your LP tokens or SPARX to earn SPARX rewards.</Text>
       </Box>
 
-      {/* Farm Stats Banner - Uses farmStats state */}
-      {farmStats && (
-          <FarmStatsBanner
-              isLoading={isLoadingStatic}
-              data={farmStats}
-          />
-      )}
-
       {!isConnected ? (
         <Center p={10}>
           <VStack spacing={4}>
@@ -485,20 +563,97 @@ function FarmTab({ isActive }: TabProps) {
             <Text fontSize="lg">No farm pools found for this network.</Text>
         </Center>
       ) : (
-        <SimpleGrid columns={{ base: 1, lg: derivedPools.length > 1 ? 2 : 1 }} spacing={4}>
-          {processedFarmData.map((data) => (
-            <FarmPoolCard
-              key={data.poolInfo.pid}
-              data={data}
-              farmAddress={farmAddress}
-              farmAbi={farmAbiTyped}
-              onSuccessfulTx={handleSuccess}
-              totalAllocPoint={rawDistributionInfo?.allocPoints.reduce((sum: bigint, val: bigint) => sum + val, 0n) ?? 0n}
-              currentRate={farmStats?.currentRate ?? 0n}
-              distributionShare={data.distributionShare}
-            />
-          ))}
-        </SimpleGrid>
+        <>
+          <SimpleGrid columns={{ base: 1, lg: derivedPools.length > 1 ? 2 : 1 }} spacing={4}>
+            {processedFarmData.map((data) => (
+              <FarmPoolCard
+                key={data.poolInfo.pid}
+                data={data}
+                farmAddress={farmAddress}
+                farmAbi={farmAbiTyped}
+                onSuccessfulTx={handleSuccess}
+                totalAllocPoint={rawDistributionInfo?.allocPoints.reduce((sum: bigint, val: bigint) => sum + val, 0n) ?? 0n}
+                currentRate={farmStats?.currentRate ?? 0n}
+                distributionShare={data.distributionShare}
+              />
+            ))}
+          </SimpleGrid>
+          
+          {/* Farm Information Card */}
+          <Card bg="#1a202c" borderColor="gray.700" variant="outline" mt={6} overflow="hidden">
+            <CardBody p={6}>
+              <VStack spacing={6} align="center">
+                {/* Farmer Fox Mascot */}
+                <Box mb={2}>
+                  <Image 
+                    src="/sparx-farm.png" 
+                    alt="Sparx Farmer" 
+                    width="200px"
+                    height="200px"
+                    objectFit="contain"
+                  />
+                </Box>
+                
+                {/* Information Sections - Side by Side */}
+                <Grid templateColumns={{ base: "1fr", md: "1fr 1fr" }} gap={{ base: 6, md: 10 }} w="full" maxW="900px">
+                  {/* LP Rewards Section */}
+                  <Box>
+                    <Flex align="center" mb={4}>
+                      <Icon as={InfoIcon} color="#FF6937" boxSize={5} mr={2} />
+                      <Heading size="md" color="#FF6937">LP Farming Rewards</Heading>
+                    </Flex>
+                    
+                    <Text fontSize="sm" color="gray.200" mb={4} pl={1}>
+                      Providing liquidity and staking LP tokens offers multiple benefits:
+                    </Text>
+                    
+                    <List spacing={3} pl={1}>
+                      <ListItem color="gray.200" fontSize="sm" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Earn trading fees from the liquidity pool</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="sm" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Earn SPARX rewards from the farm</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="sm" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Higher APR than single-sided staking</Text>
+                      </ListItem>
+                    </List>
+                  </Box>
+                  
+                  {/* Farm Mechanics Section */}
+                  <Box>
+                    <Flex align="center" mb={4}>
+                      <Icon as={LockIcon} color="#38bdf8" boxSize={5} mr={2} />
+                      <Heading size="md" color="#38bdf8">Farm Mechanics</Heading>
+                    </Flex>
+                    
+                    <Text fontSize="sm" color="gray.200" mb={4} pl={1}>
+                      Farm pools follow these mechanics:
+                    </Text>
+                    
+                    <List spacing={3} pl={1}>
+                      <ListItem color="gray.200" fontSize="sm" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Same cooldown periods as staking: 1hr stake, 30min withdraw</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="sm" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Optional locking for 7-30 days for 50-200% APR boost</Text>
+                      </ListItem>
+                      <ListItem color="gray.200" fontSize="sm" display="flex">
+                        <Text as="span" mr={2}>•</Text>
+                        <Text>Rewards auto-compound for higher yields</Text>
+                      </ListItem>
+                    </List>
+                  </Box>
+                </Grid>
+              </VStack>
+            </CardBody>
+          </Card>
+        </>
       )}
     </VStack>
   )

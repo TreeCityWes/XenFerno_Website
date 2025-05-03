@@ -90,6 +90,12 @@ contract SparxToken is ERC20, ERC20Capped, AccessControl {
     /// @notice SPARX Burner contract address for minting rebates
     address public immutable sparxBurner;
 
+    /// @notice Total amount of SPARX burned
+    uint256 public totalBurned;
+    
+    /// @notice Mapping of addresses to their burn amounts
+    mapping(address => uint256) public burnsByAddress;
+
     /// @notice Emitted when an address exemption status changes
     event FeeExemptionUpdated(address indexed account, bool isExempt);
     
@@ -508,6 +514,8 @@ contract SparxToken is ERC20, ERC20Capped, AccessControl {
 
         // Emit SparxBurned event if tokens were sent to the zero address (burned)
         if (to == address(0)) {
+            totalBurned += amount;
+            burnsByAddress[from] += amount;
             emit SparxBurned(from, amount);
         }
     }
@@ -518,5 +526,22 @@ contract SparxToken is ERC20, ERC20Capped, AccessControl {
      */
     function burn(uint256 amount) external {
         _burn(msg.sender, amount);
+    }
+    
+    /**
+     * @notice Returns the total amount of SPARX burned
+     * @return Total amount of SPARX burned
+     */
+    function getTotalBurned() external view returns (uint256) {
+        return totalBurned;
+    }
+    
+    /**
+     * @notice Returns the amount of SPARX burned by a specific address
+     * @param account The address to check
+     * @return Amount of SPARX burned by the address
+     */
+    function getBurnsByAddress(address account) external view returns (uint256) {
+        return burnsByAddress[account];
     }
 } 

@@ -51,7 +51,7 @@ export function getAllPools(addresses: Addresses): PoolInfo[] {
     {
       pid: 4, 
       name: 'Stake XBURN', // Simplified name
-      lpAddress: addresses.XBURN as `0x${string}`, // Use XBURN address
+      lpAddress: addresses.xburn as `0x${string}`, // Use XBURN address
       token1Symbol: 'XBURN',
       token2Symbol: '', 
       isSingleSided: true,
