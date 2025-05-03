@@ -662,7 +662,7 @@ export const FarmPoolCard: React.FC<FarmPoolCardProps> = ({
                     onClick={() => setSelectedLockTime(3)}
                     fontWeight="medium"
                   >
-                    3d (+10%)
+                    1d (+10%) 
                   </Button>
                   <Button 
                     size="sm" 
@@ -674,7 +674,7 @@ export const FarmPoolCard: React.FC<FarmPoolCardProps> = ({
                     onClick={() => setSelectedLockTime(7)}
                     fontWeight="medium"
                   >
-                    7d (+20%)
+                    3d (+20%)
                   </Button>
                   <Button 
                     size="sm"
@@ -687,7 +687,7 @@ export const FarmPoolCard: React.FC<FarmPoolCardProps> = ({
                     onClick={() => setSelectedLockTime(30)}
                     fontWeight="medium"
                   >
-                    30d (+50%)
+                    7d (+50%)
                   </Button>
                 </SimpleGrid>
               </Box>
