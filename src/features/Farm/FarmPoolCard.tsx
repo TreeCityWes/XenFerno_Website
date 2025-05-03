@@ -456,7 +456,6 @@ export const FarmPoolCard: React.FC<FarmPoolCardProps> = ({
           />
           <Box>
             <Heading size="md" color={sparxColor}>{poolInfo.name}</Heading>
-            <Text fontSize="xs" color={subtleTextColor}>PID: {poolInfo.pid}</Text>
           </Box>
         </Flex>
         

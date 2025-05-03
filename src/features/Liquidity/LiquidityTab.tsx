@@ -65,6 +65,14 @@ const pairAbi = [
 
 // Make STATIC_POOLS a function that accepts addresses
 const getStaticPoolDefinitions = (currentAddresses: Addresses): (Pick<LiquidityPool, 'name' | 'address' | 'token1' | 'token2' | 'pid'>)[] => [
+  // Reordered based on PID (0, 1, 2, 3) to match Farm tab order
+  {
+    name: 'SPARX/cbXEN LP',
+    address: currentAddresses.LP_SPARX_CBXEN as Address,
+    token1: 'SPARX',
+    token2: 'cbXEN',
+    pid: 0,
+  },
   {
     name: 'XBURN/WETH LP',
     address: currentAddresses.LP_XBURN_WETH as Address,
@@ -86,13 +94,6 @@ const getStaticPoolDefinitions = (currentAddresses: Addresses): (Pick<LiquidityP
     token2: 'WETH',
     pid: 3,
   },
-  {
-    name: 'SPARX/cbXEN LP',
-    address: currentAddresses.LP_SPARX_CBXEN as Address,
-    token1: 'SPARX',
-    token2: 'cbXEN',
-    pid: 0,
-  }
 ].filter(pool => isContractDeployed(pool.address));
 
 // --- Placeholder Prices & Constants ---
@@ -142,6 +143,9 @@ function LiquidityTab({ isActive }: TabProps) {
   const sparxAddress = useMemo(() => getTokenAddress('SPARX', currentAddresses), [currentAddresses]);
   const xburnAddress = useMemo(() => getTokenAddress('XBURN', currentAddresses), [currentAddresses]);
 
+  // --- State for stakingTokens order ---
+  const [stakingTokensOrder, setStakingTokensOrder] = useState<Address[]>([]);
+
   // === Contract Calls Setup ===
   const contractsToRead = useMemo(() => {
     // Use dynamic addresses and check for zeroAddress
@@ -154,6 +158,8 @@ function LiquidityTab({ isActive }: TabProps) {
     if (farmAddress !== zeroAddress) { 
       calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'currentRate', chainId: chain.id, dataType: 'farmCurrentRate', poolName: '__farm__' });
       calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'totalAllocPoint', chainId: chain.id, dataType: 'farmTotalAllocPoint', poolName: '__farm__' });
+      // --- Add call to stakingTokens for ordering ---
+      calls.push({ address: farmAddress, abi: farmAbiTyped, functionName: 'stakingTokens', chainId: chain.id, dataType: 'stakingTokensOrder', poolName: '__farm__' });
     }
 
     // Use dynamic pool definitions
@@ -243,6 +249,20 @@ function LiquidityTab({ isActive }: TabProps) {
         newCurrentRate = result.result as bigint | null;
       } else if (contractCall.dataType === 'farmTotalAllocPoint') {
         newTotalAllocPoint = result.result as bigint | null;
+      }
+      // --- Process stakingTokensOrder --- 
+      else if (contractCall.dataType === 'stakingTokensOrder') {
+        if (Array.isArray(result.result)) {
+          const newOrder = result.result as Address[];
+          // Update state only if order actually changed
+          setStakingTokensOrder(prevOrder => {
+            if (JSON.stringify(prevOrder) !== JSON.stringify(newOrder)) {
+              console.log("LiquidityTab: Setting stakingTokensOrder:", newOrder);
+              return newOrder;
+            }
+            return prevOrder;
+          });
+        }
       }
     });
 
@@ -457,6 +477,23 @@ function LiquidityTab({ isActive }: TabProps) {
       return finalPools;
     }, [readResults, currentStaticPools, farmData, contractsToRead]); // Note: keeping contractsToRead in dependencies
 
+  // Explicitly sort the pools by PID before rendering to match Farm tab order
+  const sortedPoolsForDisplay = useMemo(() => {
+    // Sort based on index in stakingTokensOrder
+    if (stakingTokensOrder.length === 0) {
+        // Fallback: sort alphabetically by address if order not loaded
+        return [...poolsWithData].sort((a, b) => a.address.localeCompare(b.address));
+    }
+    return [...poolsWithData].sort((a, b) => {
+        const indexA = stakingTokensOrder.findIndex(addr => addr.toLowerCase() === a.address.toLowerCase());
+        const indexB = stakingTokensOrder.findIndex(addr => addr.toLowerCase() === b.address.toLowerCase());
+        // Pools not in farm order go last
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+  }, [poolsWithData, stakingTokensOrder]); // Add stakingTokensOrder dependency
+
   return (
     <VStack align="stretch" spacing={6}>
       <Box>
@@ -465,7 +502,8 @@ function LiquidityTab({ isActive }: TabProps) {
       </Box>
       
       <SimpleGrid columns={{ base: 1, md: 2 }} spacing={6}>
-        {poolsWithData.map((pool) => (
+        {/* Map over the explicitly sorted array */}
+        {sortedPoolsForDisplay.map((pool) => (
           <PoolCard 
             key={pool.address}
             pool={pool}

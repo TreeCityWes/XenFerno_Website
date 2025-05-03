@@ -171,6 +171,7 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
   const [amountToken2, setAmountToken2] = useState<string>('')
   const [amountLp, setAmountLp] = useState<string>('')
   const [activeInput, setActiveInput] = useState<'token1' | 'token2'>('token1'); // Track which input was last typed into
+  const [pendingTxType, setPendingTxType] = useState<'approval' | 'liquidity' | null>(null); // State to track tx type
 
   const { address: userAddress, chain } = useAccount();
   const toast = useToast();
@@ -185,7 +186,7 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
   // --- Transaction Hooks ---
   const { data: hash, error: writeError, isPending, writeContract } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed, error: confirmationError } = useWaitForTransactionReceipt({ hash });
-  const isTxLoading = isPending || isConfirming;
+  const isTxLoading = isPending || isConfirming; // Combined loading state
 
   // --- Derived State & Formatting ---
   const poolToken1Address = useMemo(() => getTokenAddress(pool.token1, currentAddresses), [pool.token1, currentAddresses]);
@@ -316,17 +317,24 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
               return;
           }
           
+          // Use maxUint256 for approval to avoid future approval issues
+          const approvalAmount = maxUint256;
+          
           // Logging for debugging
           console.log('--- Approving Token ---');
           console.log('Token Address:', tokenAddress);
           console.log('Router Address (spender):', uniswapRouterAddress);
-          console.log('Amount to Approve:', formatUnits(amountToApprove, DECIMALS));
+          console.log('Original Amount:', formatUnits(amountToApprove, DECIMALS));
+          console.log('Approval Amount:', 'Max Approval');
+          
+          // Indicate that an approval transaction is starting
+          setPendingTxType('approval');
           
           writeContract({
               address: tokenAddress,
               abi: erc20AbiDirect,
               functionName: 'approve',
-              args: [uniswapRouterAddress, amountToApprove],
+              args: [uniswapRouterAddress, approvalAmount],
           });
       } catch (error) {
           console.error("Error calculating approval amount:", error);
@@ -336,7 +344,7 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
 
   // --- Add Liquidity Logic ---
   const handleAddLiquidity = () => {
-    console.log("handleAddLiquidity triggered"); // Add log
+    console.log("handleAddLiquidity triggered"); 
     if (!userAddress || !poolToken1Address || !poolToken2Address) {
       console.log("handleAddLiquidity aborted: Missing addresses");
       return;
@@ -345,6 +353,22 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
     try {
         const amount1Parsed = parseUnits(amountToken1 || '0', DECIMALS);
         const amount2Parsed = parseUnits(amountToken2 || '0', DECIMALS);
+        
+        // Debug info for ETH pairs
+        if (isWethPair) {
+            console.log('--- ETH Pair Debug Info ---');
+            console.log('Pool Name:', pool.name);
+            console.log('Is WETH Pair:', isWethPair);
+            console.log('Token1 Address:', poolToken1Address);
+            console.log('Token2 Address:', poolToken2Address);
+            console.log('WETH Address:', sepoliaWethAddress);
+            console.log('Token1 is ETH:', poolToken1Address.toLowerCase() === sepoliaWethAddress.toLowerCase());
+            console.log('Token2 is ETH:', poolToken2Address.toLowerCase() === sepoliaWethAddress.toLowerCase());
+            console.log('Token1 Allowance:', pool.token1Allowance ? formatUnits(pool.token1Allowance, DECIMALS) : 'null');
+            console.log('Token2 Allowance:', pool.token2Allowance ? formatUnits(pool.token2Allowance, DECIMALS) : 'null');
+            console.log('Token1 Needs Approval:', needsApprovalToken1);
+            console.log('Token2 Needs Approval:', needsApprovalToken2);
+        }
         
         // Validate input amounts against balances
         if (poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase()) {
@@ -385,6 +409,9 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
             return;
         }
 
+        // Indicate that a liquidity transaction is starting
+        setPendingTxType('liquidity');
+
         const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 20); // 20 min deadline
 
         // TODO: Add slippage calculation for amountMin
@@ -404,6 +431,33 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
                  console.error("Add liquidity error: Could not determine non-WETH token address.");
                  toast({ title: "Error", description: "Could not determine token address for ETH pair.", status: "error" });
                  return;
+            }
+            
+            // Debug ETH pair specific transaction data
+            console.log('--- ETH Pair Transaction Data ---');
+            console.log('Token Address for addLiquidityETH:', tokenAddress);
+            console.log('Token Amount Desired:', formatUnits(tokenAmountDesired, DECIMALS));
+            console.log('ETH Amount Desired:', formatUnits(ethAmountDesired, DECIMALS)); 
+            console.log('Token Amount Min:', formatUnits(tokenAmountMin, DECIMALS));
+            console.log('ETH Amount Min:', formatUnits(ethAmountMin, DECIMALS));
+            console.log('User Address:', userAddress);
+            console.log('Deadline:', deadline.toString());
+
+            // Double check if we need to approve the non-ETH token first
+            // If there's a WETH pair and an approval was needed but no Approve button was shown
+            if (needsApprovalToken1 || needsApprovalToken2) {
+                console.log('WETH pair requires token approval first!');
+                // Approval needed, handle it first
+                const tokenToApprove = poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase() 
+                    ? poolToken2Address : poolToken1Address;
+                
+                toast({ 
+                    title: "Approval Required", 
+                    description: `Please approve your tokens before adding liquidity.`,
+                    status: "warning" 
+                });
+                // Don't proceed, let user click approve first
+                return;
             }
 
             writeContract({
@@ -550,38 +604,48 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
   // Show transaction feedback
   useEffect(() => {
     if (isConfirmed) {
-      // Check if this was an approval transaction by looking at hash context only
-      const isApprovalTx = hash && hash.toString().includes('approve');
+      // Explicitly handle based on the type of transaction that succeeded
+      if (pendingTxType === 'approval') {
+        toast({
+          title: "Approval Confirmed",
+          description: "Token approval successful. You can now proceed.",
+          status: "success",
+          duration: 5000,
+          isClosable: true
+        });
+        onSuccessfulTx(); // Refresh allowances
+        setPendingTxType(null); // Reset state, keep panel open
 
-      toast({ 
-        title: "Transaction Confirmed", 
-        description: isApprovalTx ? "Token approval successful. You can now proceed." : "Liquidity updated successfully.", 
-        status: "success", 
-        duration: 5000, 
-        isClosable: true 
-      });
-      
-      onSuccessfulTx(); // Always refresh data
-      
-      // Only reset UI state if it was NOT an approval transaction
-      if (!isApprovalTx) {
-        setManageMode(null); // Close management panel after liquidity operations
-        // Don't reset input amounts here - we'll handle that when closing the panel
+      } else if (pendingTxType === 'liquidity') {
+        toast({
+          title: "Transaction Confirmed",
+          description: "Liquidity updated successfully.",
+          status: "success",
+          duration: 5000,
+          isClosable: true
+        });
+        onSuccessfulTx(); // Refresh pool data
+        setManageMode(null); // Close panel after liquidity action
+        setPendingTxType(null); // Reset state
       }
-    }
-    
-    if (writeError) {
+      // If pendingTxType was somehow null, we might log an error or do nothing
+      // else {
+      //   console.warn("Transaction confirmed but pendingTxType was null.");
+      // }
+
+    } else if (writeError) { // Handle write errors
       const message = writeError instanceof BaseError ? writeError.shortMessage : writeError.message;
       toast({ title: "Transaction Error", description: message, status: "error", duration: 7000, isClosable: true });
-    }
-    
-    if (confirmationError) {
+      setPendingTxType(null); // Reset pending type on error
+
+    } else if (confirmationError) { // Handle confirmation errors
       const message = confirmationError instanceof BaseError ? confirmationError.shortMessage : confirmationError.message;
       toast({ title: "Confirmation Error", description: message, status: "error", duration: 7000, isClosable: true });
+      setPendingTxType(null); // Reset pending type on error
     }
-  }, [isConfirmed, writeError, confirmationError, hash, toast, onSuccessfulTx]);
+  }, [isConfirmed, writeError, confirmationError, pendingTxType, toast, onSuccessfulTx, setManageMode]); // Added setManageMode to dependencies
 
-  // Reset amounts only when manage mode changes (opening/closing panels)
+  // Reset amounts only when manage mode explicitly changes to null (panel closes)
   useEffect(() => {
     if (manageMode === null) {
       setAmountToken1('');
@@ -592,24 +656,22 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
 
   // Check allowances
   const needsApprovalToken1 = useMemo(() => {
-      // Check against sepoliaWethAddress
-      if (!poolToken1Address || poolToken1Address.toLowerCase() === sepoliaWethAddress.toLowerCase() || !pool.token1Allowance) return false;
+      // Check against sepoliaWethAddress - no approval needed for native ETH
+      if (!poolToken1Address || poolToken1Address.toLowerCase() === sepoliaWethAddress.toLowerCase()) return false;
       try {
           const amount1Parsed = parseUnits(amountToken1 || '0', DECIMALS);
-          return amount1Parsed > 0n && pool.token1Allowance < amount1Parsed;
+          return amount1Parsed > 0n && (!pool.token1Allowance || pool.token1Allowance < amount1Parsed);
       } catch { return false; }
-  }, [amountToken1, pool.token1Allowance, poolToken1Address]); // Removed wethAddress dependency
+  }, [amountToken1, pool.token1Allowance, poolToken1Address]);
 
   const needsApprovalToken2 = useMemo(() => {
-      // Check against sepoliaWethAddress
-      if (!poolToken2Address || poolToken2Address.toLowerCase() === sepoliaWethAddress.toLowerCase()) return false; // No approval needed for WETH
-      const allowance = pool.token2Allowance; // Use allowance from pool prop
-      if (allowance === null || allowance === undefined) return true; // Needs loading or failed to load, assume approval needed
-       try {
+      // Check against sepoliaWethAddress - no approval needed for native ETH
+      if (!poolToken2Address || poolToken2Address.toLowerCase() === sepoliaWethAddress.toLowerCase()) return false;
+      try {
           const amount2Parsed = parseUnits(amountToken2 || '0', DECIMALS);
-          return amount2Parsed > 0n && allowance < amount2Parsed;
+          return amount2Parsed > 0n && (!pool.token2Allowance || pool.token2Allowance < amount2Parsed);
       } catch { return false; }
-  }, [amountToken2, pool.token2Allowance, poolToken2Address]); // Removed wethAddress dependency
+  }, [amountToken2, pool.token2Allowance, poolToken2Address]);
 
    const needsApprovalLp = useMemo(() => {
       try {
@@ -702,7 +764,6 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
               borderRadius="full"
             />
             <Heading size="md" color="brand.500">{pool.name}</Heading>
-            <Badge colorScheme="gray" variant="outline" fontSize="xs">PID: {pool.pid}</Badge>
             <Link href={getExplorerUrl()} isExternal>
               <Icon as={FaExternalLinkAlt} color="gray.400" _hover={{ color: 'brand.500' }} />
             </Link>
@@ -936,22 +997,25 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
                 {/* Action Buttons (Approve/Add) */}
                 <HStack>
                     {(needsApprovalToken1 || needsApprovalToken2) && (
-                        <Button 
+                        <Button
                             colorScheme="yellow"
-                            onClick={() => handleApprove(needsApprovalToken1 ? poolToken1Address : poolToken2Address)} 
-                            isLoading={isTxLoading && hash !== null}
-                            isDisabled={isTxLoading}
+                            onClick={() => handleApprove(needsApprovalToken1 ? poolToken1Address : poolToken2Address)}
+                            // isLoading only if tx is loading AND it's an approval tx
+                            isLoading={isTxLoading && pendingTxType === 'approval'}
+                            isDisabled={isTxLoading} // Disable if any tx is loading
                             flex={1}
                         >
                             Approve {needsApprovalToken1 ? pool.token1 : pool.token2}
                         </Button>
                     )}
                      {!needsApprovalToken1 && !needsApprovalToken2 && (
-                        <Button 
+                        <Button
                             colorScheme="brand"
-                            onClick={handleAddLiquidity} 
-                            isLoading={isTxLoading}
-                            isDisabled={isTxLoading || uniswapRouterAddress === zeroAddress || !amountToken1 || !amountToken2 || parseFloat(amountToken1) <= 0 || parseFloat(amountToken2) <= 0}
+                            onClick={handleAddLiquidity}
+                            // isLoading only if tx is loading AND it's a liquidity tx
+                            isLoading={isTxLoading && pendingTxType === 'liquidity'}
+                            // Also disable if approval is needed (safeguard) or inputs invalid
+                            isDisabled={needsApprovalToken1 || needsApprovalToken2 || isTxLoading || uniswapRouterAddress === zeroAddress || !amountToken1 || !amountToken2 || parseFloat(amountToken1) <= 0 || parseFloat(amountToken2) <= 0}
                             flex={1}
                             size="lg"
                         >
@@ -1034,22 +1098,25 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
                 {/* Action Buttons (Approve/Remove) */}
                 <HStack>
                     {needsApprovalLp && (
-                        <Button 
+                        <Button
                           colorScheme="yellow"
-                          onClick={() => handleApprove(pool.address)} 
-                          isLoading={isTxLoading && hash !== null}
-                          isDisabled={isTxLoading}
+                          onClick={() => handleApprove(pool.address)}
+                          // isLoading only if tx is loading AND it's an approval tx
+                          isLoading={isTxLoading && pendingTxType === 'approval'}
+                          isDisabled={isTxLoading} // Disable if any tx is loading
                           flex={1}
                         >
                           Approve LP Tokens
                         </Button>
                     )}
                     {!needsApprovalLp && (
-                      <Button 
+                      <Button
                           colorScheme="red"
-                          onClick={handleRemoveLiquidity} 
-                          isLoading={isTxLoading}
-                          isDisabled={isTxLoading || uniswapRouterAddress === zeroAddress || !amountLp || parseFloat(amountLp) <= 0}
+                          onClick={handleRemoveLiquidity}
+                          // isLoading only if tx is loading AND it's a liquidity tx
+                          isLoading={isTxLoading && pendingTxType === 'liquidity'}
+                          // Also disable if approval is needed (safeguard) or input invalid
+                          isDisabled={needsApprovalLp || isTxLoading || uniswapRouterAddress === zeroAddress || !amountLp || parseFloat(amountLp) <= 0}
                           flex={1}
                           size="lg"
                       >

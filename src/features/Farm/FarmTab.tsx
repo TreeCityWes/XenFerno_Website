@@ -108,6 +108,7 @@ function FarmTab({ isActive }: TabProps) {
   const [dataMap, setDataMap] = useState<Map<number, Partial<FarmPoolCardData>>>(new Map());
   const [rawDistributionInfo, setRawDistributionInfo] = useState<any>(null);
   const [farmStats, setFarmStats] = useState<FarmStatsData | null>(null);
+  const [stakingTokensOrder, setStakingTokensOrder] = useState<Address[]>([]);
 
   const currentAddresses = useMemo(() => getAddressesForChain(chain?.id), [chain?.id]);
   const farmAddress = useMemo(() => {
@@ -123,6 +124,7 @@ function FarmTab({ isActive }: TabProps) {
       { address: farmAddress, abi: farmAbiTyped, functionName: 'getPoolDistributionInfo', chainId: chain.id },
       { address: farmAddress, abi: farmAbiTyped, functionName: 'getFarmInfo', chainId: chain.id },
       { address: farmAddress, abi: farmAbiTyped, functionName: 'getEmissionPhaseInfo', chainId: chain.id },
+      { address: farmAddress, abi: farmAbiTyped, functionName: 'stakingTokens', chainId: chain.id },
     ];
   }, [isConnected, chain?.id, farmAddress]);
 
@@ -138,6 +140,7 @@ function FarmTab({ isActive }: TabProps) {
     let newPoolCount = 0;
     let newFarmStats: Partial<FarmStatsData> = {};
     let newDistributionInfo: any = null;
+    let newStakingTokensOrder: Address[] = [];
 
     staticResults.forEach((result, index) => {
       if (result.status !== 'success') {
@@ -195,12 +198,19 @@ function FarmTab({ isActive }: TabProps) {
             console.error("Invalid emission phase info format:", result.result);
           }
           break;
+        case 4: // stakingTokens
+          if (Array.isArray(result.result)) {
+            newStakingTokensOrder = result.result as Address[];
+            console.log("Processing stakingTokens:", newStakingTokensOrder);
+          }
+          break;
       }
     });
 
     setPoolCount(newPoolCount);
     setFarmStats((prev: FarmStatsData | null) => ({ ...(prev || {}), ...newFarmStats }) as FarmStatsData);
     setRawDistributionInfo(newDistributionInfo);
+    setStakingTokensOrder(newStakingTokensOrder);
     
     console.log("Updated farm stats:", newFarmStats);
     console.log("Updated distribution info:", newDistributionInfo);
@@ -527,6 +537,22 @@ function FarmTab({ isActive }: TabProps) {
   const isLoading = isLoadingStatic || (userDataCalls.length > 0 && isLoadingUserData);
   const combinedError = staticError || (userDataCalls.length > 0 ? userDataError : null);
 
+  // Explicitly sort the final processed data by PID before rendering
+  const sortedProcessedFarmData = useMemo(() => {
+    if (stakingTokensOrder.length === 0) {
+        // If order isn't available yet, return unsorted or sort alphabetically as fallback
+        return [...processedFarmData].sort((a, b) => a.poolInfo.lpAddress.localeCompare(b.poolInfo.lpAddress));
+    }
+    return [...processedFarmData].sort((a, b) => {
+        const indexA = stakingTokensOrder.findIndex(addr => addr.toLowerCase() === a.poolInfo.lpAddress.toLowerCase());
+        const indexB = stakingTokensOrder.findIndex(addr => addr.toLowerCase() === b.poolInfo.lpAddress.toLowerCase());
+        // Put pools not found in stakingTokens at the end
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+  }, [processedFarmData, stakingTokensOrder]);
+
   // === UI ===
   return (
     <VStack align="stretch" spacing={6}>
@@ -565,7 +591,8 @@ function FarmTab({ isActive }: TabProps) {
       ) : (
         <>
           <SimpleGrid columns={{ base: 1, lg: derivedPools.length > 1 ? 2 : 1 }} spacing={4}>
-            {processedFarmData.map((data) => (
+            {/* Map over the explicitly sorted array */}
+            {sortedProcessedFarmData.map((data) => (
               <FarmPoolCard
                 key={data.poolInfo.pid}
                 data={data}
