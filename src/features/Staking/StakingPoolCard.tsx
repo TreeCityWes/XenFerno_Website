@@ -22,6 +22,7 @@ import {
   Badge,
   Progress,
   Image,
+  SimpleGrid,
 } from '@chakra-ui/react';
 import { useState, useEffect, useMemo } from 'react';
 import { FarmPoolCardData } from '../Farm/FarmTab';
@@ -36,22 +37,40 @@ import { useCountdown } from '../../hooks/useCountdown';
 
 const erc20AbiDirect = erc20Abi as Abi;
 
-// Define theme colors - updated for fire theme
-const primaryColor = '#FF6937';          // Fiery orange-red (XBURN primary)
-const sparxColor = '#FFA500';            // Yellow-orange (SPARX primary)
-const accentColor = '#FF6937';           // Use primaryColor as main accent
-const darkBg = '#1A202C';               // Darker background
-const darkCardBg = '#2D3748';           // Slightly lighter card background
-const darkInputBg = '#1A202C';          // Dark input background
-const borderColor = '#4A5568';          // Slightly lighter border color for contrast
-const burnRed = '#E53E3E';               // Adjusted red for better visibility
-const burnOrange = '#DD6B20';            // Adjusted orange for better visibility
-const lightTextColor = 'gray.200';       // Main text color on dark BG
-const subtleTextColor = 'gray.400';      // Helper text color
-const countdownColor = 'teal.300';       // Color for countdown timers
+// --- Dark Fire Theme Colors (Matching Screenshot) ---
+const primaryColor = '#FF6937';          // Accent orange (tabs, MAX button, cooldown text)
+const sparxColor = '#FF9500';            // Orange for SPARX/XBURN titles
+const darkCardBg = '#252f3f';           // Card background
+const darkInputBg = '#1e293b';          // Input/Tab area background
+const borderColor = '#374151';          // Borders
+const buttonBrown = '#92400e';          // Brown for Harvest/Stake/Approve buttons
+const buttonBrownHover = '#b45309';     // Hover for brown buttons
+const buttonRed = '#b91c1c';             // Red for Unstake button
+const buttonRedHover = '#991b1b';        // Hover for red buttons
+const lockSelectedYellow = '#eab308';    // Yellow for selected "No Lock" button
+const lockBorderColor = '#4b5563';      // Border for non-selected lock buttons
+const boostYellow = '#eab308';          // Gold for boost badge
+const lightTextColor = '#e5e7eb';       // Main text color (balances, etc.)
+const subtleTextColor = '#9ca3af';      // Dimmer text color (labels)
+const cooldownTextColor = '#38bdf8';     // Light blue for cooldown timers below buttons
+const statusLockedBg = '#1e293b';      // Background for "Locked" badge
+const statusNotLockedBg = '#065f46';    // Background for "Not Locked" badge (Green)
+const statusStakeCdBg = '#92400e';       // Background for Stake Cooldown badge (Brown)
+const statusWithdrawCdBg = '#9f1239';    // Background for Withdraw Cooldown badge (Dark Red)
+const darkBg = '#1A202C';               // Darkest background (Input field)
+
+// --- Aliases (if needed, direct usage preferred) ---
+// const countdownColor = cooldownTextColor;
+// const burnRed = buttonRed;
 
 // Define the target color from PoolCard heading
-const targetColor = 'brand.400'; // #FFCA28 - The yellow color
+const targetColor = '#FF9500'; // Updated to match sparxColor
+
+// Define LockOption interface to match the contract
+interface LockOption {
+  duration: bigint;
+  bonusMultiplier: bigint;
+}
 
 // Helper component for key-value display
 const DataRow: React.FC<{ label: string; children: React.ReactNode; isLoading?: boolean; labelColor?: string; valueColor?: string, labelSize?: string; valueSize?: string; valueWeight?: string }> = ({ 
@@ -60,7 +79,7 @@ const DataRow: React.FC<{ label: string; children: React.ReactNode; isLoading?: 
     <Flex justify="space-between" align="center" w="full">
         <Text fontSize={labelSize} color={labelColor}>{label}</Text>
         <Skeleton isLoaded={!isLoading}>
-             <Text fontSize={valueSize} fontWeight={valueWeight} color={valueColor} textAlign="right">{children}</Text>
+             <Text fontSize={valueSize} fontWeight={valueWeight} color={valueColor || lightTextColor} textAlign="right">{children}</Text>
         </Skeleton>
     </Flex>
 );
@@ -76,6 +95,22 @@ const formatDuration = (seconds: bigint | null | undefined): string => {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+};
+
+// Format duration in days for display
+const formatDurationInDays = (seconds: bigint): string => {
+  if (!seconds) return "0d";
+  const totalSeconds = Number(seconds);
+  const days = Math.ceil(totalSeconds / 86400); // Round up to nearest day
+  return `${days}d`;
+};
+
+// Format bonus multiplier for display
+const formatBonus = (multiplier: bigint): string => {
+  // Bonus is stored in basis points (10000 = 1x)
+  const bonusPercent = (Number(multiplier) - 10000) / 100;
+  if (bonusPercent <= 0) return "No Bonus";
+  return `+${bonusPercent}%`;
 };
 
 // Lock status indicator component
@@ -185,7 +220,17 @@ const getTokenLogo = (tokenSymbol: string): string => {
 };
 
 interface StakingPoolCardProps {
-  data: FarmPoolCardData;
+  data: {
+    poolInfo: any;
+    walletBalance: bigint | null;
+    allowance: bigint | null;
+    pendingRewards: bigint | null;
+    stakedBalance: bigint | null;
+    cooldownInfo: any | null;
+    lockInfo: any | null;
+    lockOptions: LockOption[];
+    distributionShare?: bigint | null;
+  };
   farmAddress: `0x${string}`;
   farmAbi: Abi;
   onSuccessfulTx: () => void;
@@ -210,7 +255,9 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
     allowance, 
     pendingRewards, 
     stakedBalance, 
-    cooldownInfo
+    cooldownInfo,
+    lockInfo,
+    lockOptions = []
   } = data;
   const { address: userAddress } = useAccount();
   const toast = useToast();
@@ -229,7 +276,9 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
   const [stakeAmount, setStakeAmount] = useState('');
   const [unstakeAmount, setUnstakeAmount] = useState('');
   const [activeTab, setActiveTab] = useState<'stake' | 'unstake'>('stake');
-  const [selectedLockTime, setSelectedLockTime] = useState<number>(0); // 0 = no lock, 3 = 3 days, 7 = 7 days, 30 = 30 days
+  // Default to no lock (index 0)
+  const [selectedOptionIndex, setSelectedOptionIndex] = useState<number>(0);
+  const [selectedLockTime, setSelectedLockTime] = useState<number>(0);
 
   const { 
     data: hash, 
@@ -252,6 +301,23 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
   const formatBigIntDisplay = (value: bigint | null | undefined, decimals = 18, displayDecimals = 4) => {
     if (value === null || typeof value === 'undefined') return '0.0'.padEnd(displayDecimals + 2, '0');
     const formatted = formatUnits(value, decimals);
+    const num = parseFloat(formatted);
+    
+    // Special case for extremely large numbers (scientific notation) - likely max approvals
+    if (num > 1_000_000_000 || formatted.includes('e+')) {
+      return "1B+";
+    }
+    
+    // Format with suffixes for large numbers
+    if (num >= 1_000_000_000) {
+      return `${(num / 1_000_000_000).toFixed(2)}B`;
+    } else if (num >= 1_000_000) {
+      return `${(num / 1_000_000).toFixed(2)}M`;
+    } else if (num >= 1_000) {
+      return `${(num / 1_000).toFixed(2)}K`;
+    }
+    
+    // Regular formatting for smaller numbers
     const [integerPart, fractionalPart = ''] = formatted.split('.');
     return `${integerPart}.${fractionalPart.slice(0, displayDecimals).padEnd(displayDecimals, '0')}`;
   };
@@ -311,13 +377,56 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
     [poolInfo.token1Symbol]
   );
 
+  // Initialize lock options when they're loaded
+  useEffect(() => {
+    console.log("Lock options loaded:", lockOptions);
+    // Default to first option (should be no lock / 0 days)
+    if (lockOptions && lockOptions.length > 0) {
+      setSelectedOptionIndex(0); // Always start with option index 0 (no lock)
+      setSelectedLockTime(0);
+    }
+  }, [lockOptions]);
+
+  // Handle lock option selection
+  const handleLockOptionSelect = (index: number) => {
+    console.log(`Selecting lock option index: ${index}`);
+    setSelectedOptionIndex(index);
+    
+    // Update selected lock time based on index (used for UI)
+    if (index === 0) setSelectedLockTime(0); // No lock
+    else if (index === 1) setSelectedLockTime(7); // 7 days
+    else if (index === 2) setSelectedLockTime(14); // 14 days
+    else if (index === 3) setSelectedLockTime(30); // 30 days
+  };
+
   // --- Event Handlers ---
-  const handleApprove = () => writeContract({ 
-      address: stakingTokenAddress, 
-      abi: erc20AbiDirect, 
-      functionName: 'approve', 
-      args: [farmAddress, maxUint256] 
-  });
+  const handleApprove = () => {
+    try {
+      // Exact amount the user entered - no buffer
+      const amountToApprove = parseUnits(stakeAmount || '0', 18);
+
+      // Only proceed if amount is greater than zero
+      if (amountToApprove <= 0n) {
+        toast({ title: "Invalid Amount", description: "Please enter an amount greater than zero", status: "warning" });
+        return;
+      }
+      
+      console.log('--- Approving Token ---');
+      console.log('Token Address:', stakingTokenAddress);
+      console.log('Farm Address (spender):', farmAddress);
+      console.log('Amount to Approve:', formatUnits(amountToApprove, 18));
+      
+      writeContract({ 
+        address: stakingTokenAddress, 
+        abi: erc20AbiDirect, 
+        functionName: 'approve', 
+        args: [farmAddress, amountToApprove]
+      });
+    } catch (error) {
+      console.error("Error calculating approval amount:", error);
+      toast({ title: "Error", description: "Failed to calculate approval amount", status: "error", duration: 5000 });
+    }
+  };
   
   const handleStake = () => {
       if (!stakeAmount || stakeAmountNum <= 0) return;
@@ -337,20 +446,27 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
         // Show harvest warning only if everything else is okay
         if (hasPendingRewards) toast({ title: "Harvest Recommended", description: "Harvest pending rewards before staking more.", status: "info", duration: 6000, isClosable: true });
         
-        // If selected lock time is 0, use regular deposit function
-        if (selectedLockTime === 0) {
-          writeContract({ address: farmAddress, abi: farmAbi, functionName: 'deposit', args: [BigInt(poolInfo.pid), amountParsed] });
-        } else {
-          // Use depositWithLock function with selected lock duration (in days)
-          const lockDurationInDays = BigInt(selectedLockTime);
-          writeContract({ 
-            address: farmAddress, 
-            abi: farmAbi, 
-            functionName: 'depositWithLock', 
-            args: [BigInt(poolInfo.pid), amountParsed, lockDurationInDays] 
-          });
+        // Check if we have valid lock options before proceeding
+        if (!lockOptions || lockOptions.length === 0) {
+          toast({ title: "Error", description: "No lock options available for this pool", status: "error" });
+          return;
         }
-      } catch { toast({ title: "Invalid stake amount", status: "error" }); }
+        
+        // Use the selected option index directly
+        const optionIndex = selectedOptionIndex;
+        console.log(`Staking with lock option index: ${optionIndex} (${formatDurationInDays(lockOptions[optionIndex].duration)} lock, ${formatBonus(lockOptions[optionIndex].bonusMultiplier)} bonus)`);
+        
+        // Update deposit call to include the optionIndex parameter
+        writeContract({ 
+          address: farmAddress, 
+          abi: farmAbi, 
+          functionName: 'deposit', 
+          args: [BigInt(poolInfo.pid), amountParsed, optionIndex] 
+        });
+      } catch (e) { 
+        console.error("Stake error:", e);
+        toast({ title: "Invalid stake amount", description: String(e), status: "error" }); 
+      }
   };
   
   const handleUnstake = () => {
@@ -371,34 +487,52 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
   // --- Transaction Result Handling ---
   useEffect(() => {
     if (isConfirmed) {
-      toast({ title: 'Transaction Successful', status: 'success', duration: 5000 });
-      onSuccessfulTx(); setStakeAmount(''); setUnstakeAmount('');
+      // Check if this was an approval transaction
+      const isApprovalTx = hash && hash.toString().includes('approve');
+      
+      toast({
+        title: 'Transaction Successful',
+        description: isApprovalTx ? "Token approval successful. You can now proceed with staking." : "Staking operation completed.",
+        status: 'success',
+        duration: 5000
+      });
+      
+      // Always refresh data
+      onSuccessfulTx();
+      
+      // Only clear inputs if it was NOT an approval transaction
+      if (!isApprovalTx) {
+        setStakeAmount('');
+        setUnstakeAmount('');
+      }
     }
+    
     const txError = writeError || confirmationError;
     if (txError) {
       const message = txError instanceof BaseError ? txError.shortMessage : txError?.message || 'Unknown error';
       toast({ title: 'Transaction Failed', description: message, status: 'error', duration: 7000 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConfirmed, writeError, confirmationError]);
+  }, [isConfirmed, writeError, confirmationError, hash]);
 
   // --- Rendering ---
   return (
     <Box 
       borderWidth="1px" 
-      borderRadius="xl" 
+      borderRadius="lg" 
       p={5} 
-      boxShadow="lg" 
+      boxShadow="md"
       bg={darkCardBg} 
       borderColor={borderColor} 
-      overflow="hidden"
-      transition='all 0.3s ease'
-      _hover={{
-         borderColor: fireColor, 
-         boxShadow: `0 0 15px ${primaryColor}44, 0 0 25px ${sparxColor}22`
-      }}
+      overflow="visible"
+      transition='all 0.2s ease-out'
+      _hover={{ borderColor: primaryColor, boxShadow: 'lg' }}
+      position="relative"
+      display="flex"
+      flexDirection="column"
+      minHeight="560px" // Added minHeight to help consistency
     >
-      <VStack align="stretch" spacing={4}> 
+      <VStack align="stretch" spacing={4} flexGrow={1}> 
         {/* Header */}
         <Flex justify="space-between" align="center">
           <HStack>
@@ -409,13 +543,13 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
               borderRadius="full"
               mr={2}
             />
-            <Heading size="md" sx={fireHeadingText}>{poolInfo.name}</Heading>
+            <Heading size="md" color={sparxColor}>{poolInfo.name}</Heading>
           </HStack>
           <Text fontSize="xs" color={subtleTextColor}>PID: {poolInfo.pid}</Text>
         </Flex>
 
         {/* Stats Section */}
-        <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+        <Grid templateColumns="repeat(2, 1fr)" gap={6}> 
           {/* Left column - Staked Balance & Reward Share */}
           <Box>
             <Text fontSize="sm" color={subtleTextColor} mb={1}>Staked Balance</Text>
@@ -425,79 +559,100 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
               </Text>
             </Skeleton>
             
-            {/* Reward Share Display */}
             <Box mt={3}>
               <Text fontSize="sm" color={subtleTextColor} mb={1}>Reward Share</Text>
               <Skeleton isLoaded={distributionShare !== null} minHeight="24px">
-                <HStack>
-                  <Text fontSize="xl" fontWeight="bold" color="yellow.400">{rewardShareFormatted}</Text>
-                  <Tooltip label="Percentage of total farm rewards allocated to this pool">
-                    <Badge colorScheme="yellow" variant="outline">
-                      Pool Allocation
-                    </Badge>
-                  </Tooltip>
-                </HStack>
+                <Box
+                  bg={boostYellow}
+                  color="black"
+                  fontWeight="bold"
+                  px={2}
+                  py={0.5} 
+                  borderRadius="md"
+                  fontSize="xs"
+                  display="inline-block"
+                >
+                  {rewardShareFormatted} BOOST
+                </Box>
               </Skeleton>
             </Box>
           </Box>
           
           {/* Right column - Pending Rewards & Harvest Button */}
           <Box>
-            <HStack justify="space-between" align="flex-start" spacing={2}>
-              {/* Pending Rewards */}
-              <VStack align="flex-start" spacing={0}>
-                 <Text fontSize="sm" color={subtleTextColor} mb={1}>Pending Rewards</Text>
-                 <Skeleton isLoaded={pendingRewards !== null}>
-                    <Text fontSize="lg" fontWeight="bold" sx={sparxNumberText}>
-                      {pendingRewardsFormatted} SPARX
-                    </Text>
-                  </Skeleton>
-              </VStack>
-              <Spacer />
-            </HStack>
-            {/* Harvest Button below rewards */}
-            <Button
-                mt={3}
-                w="full"
-                size="sm"
-                bg={sparxColor}
-                color="black"
-                _hover={{ bg: 'yellow.500', boxShadow: `0 0 10px ${sparxColor}aa` }}
-                _active={{ bg: 'yellow.600' }}
-                onClick={handleHarvest}
-                isDisabled={!userAddress || !hasPendingRewards || isTxLoading}
-                isLoading={isTxLoading && hash && !isConfirmed}
-              >
-                Harvest
-              </Button>
+            <VStack align="flex-start" spacing={1}>
+              <Text fontSize="sm" color={subtleTextColor} mb={1}>Pending Rewards</Text>
+              <Skeleton isLoaded={pendingRewards !== null}>
+                <VStack spacing={0} align="flex-start">
+                  <Text fontSize="xl" fontWeight="bold" color={boostYellow}> 
+                    {pendingRewardsFormatted} SPARX
+                  </Text>
+                  <Text fontSize="xs" color={subtleTextColor}>
+                    ~${(parseFloat(pendingRewardsFormatted) * 0.015).toFixed(2)} USD
+                  </Text>
+                </VStack>
+              </Skeleton>
+              
+              <Box height="8px" />
+              
+              <Box width="100%" minHeight="50px"> 
+                <Button
+                  size="sm"
+                  width="full"
+                  bg={buttonBrown}
+                  color="white"
+                  _hover={{ bg: buttonBrownHover }}
+                  onClick={handleHarvest}
+                  isDisabled={!userAddress || !hasPendingRewards || isTxLoading || cooldownInfo?.isCooldownActive}
+                  isLoading={isTxLoading && hash && !isConfirmed}
+                  borderRadius="md"
+                >
+                  Harvest
+                </Button>
+                
+                {cooldownInfo?.isCooldownActive && hasPendingRewards && (
+                  <Text 
+                    fontSize="xs" 
+                    fontWeight="medium"
+                    color={primaryColor} 
+                    textAlign="center"
+                    mt={1}
+                  >
+                    Harvest in {formatDuration(cooldownInfo.cooldownEnds - BigInt(Math.floor(Date.now() / 1000)))}
+                  </Text>
+                )}
+              </Box>
+            </VStack>
           </Box>
         </Grid>
 
         <Divider borderColor={borderColor} />
 
         {/* Tabs for Stake/Unstake */}
-        <Flex>
+        <Flex borderBottomWidth="1px" borderColor={borderColor}>
           <Button 
             flex="1" 
-            variant={activeTab === 'stake' ? 'solid' : 'ghost'} 
-            bg={activeTab === 'stake' ? 'transparent' : 'transparent'}
-            color={activeTab === 'stake' ? fireColor : subtleTextColor}
-            borderBottom={activeTab === 'stake' ? `2px solid ${fireColor}` : '2px solid transparent'}
-            borderRadius="0"
-            _hover={{ bg: 'gray.700', color: 'white' }}
+            variant="ghost" 
+            fontWeight="medium"
+            color={activeTab === 'stake' ? primaryColor : subtleTextColor}
+            borderBottom={activeTab === 'stake' ? `2px solid ${primaryColor}` : '2px solid transparent'}
+            borderRadius={0} 
             onClick={() => setActiveTab('stake')}
+            _focus={{ boxShadow: 'none' }}
+            _hover={{ bg: 'transparent', color: lightTextColor }} // Adjust hover
           >
             Stake
           </Button>
           <Button 
-            flex="1" 
-            variant={activeTab === 'unstake' ? 'solid' : 'ghost'} 
-            bg={activeTab === 'unstake' ? 'transparent' : 'transparent'}
-            color={activeTab === 'unstake' ? fireColor : subtleTextColor}
-            borderBottom={activeTab === 'unstake' ? `2px solid ${fireColor}` : '2px solid transparent'}
-            borderRadius="0"
-            _hover={{ bg: 'gray.700', color: 'white' }}
+            flex="1"
+            variant="ghost"
+            fontWeight="medium"
+            color={activeTab === 'unstake' ? primaryColor : subtleTextColor}
+            borderBottom={activeTab === 'unstake' ? `2px solid ${primaryColor}` : '2px solid transparent'}
+            borderRadius={0}
             onClick={() => setActiveTab('unstake')}
+            _focus={{ boxShadow: 'none' }}
+            _hover={{ bg: 'transparent', color: lightTextColor }} // Adjust hover
           >
             Unstake
           </Button>
@@ -505,13 +660,18 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
 
         {/* Tab Content Area */}
         <Box 
-          p={5} 
+          p={4} 
           bg={darkInputBg} 
           borderRadius="md"
+          borderWidth="1px"
+          borderColor={borderColor}
+          flexGrow={1}
+          display="flex"
+          flexDirection="column"
         >
           {activeTab === 'stake' ? (
             /* Stake Form */
-            <VStack align="stretch" spacing={4}>
+            <VStack align="stretch" spacing={4} flex="1"> 
               <FormControl>
                 <Flex justify="space-between" mb={1}>
                   <FormHelperText color={subtleTextColor}>Enter amount to stake</FormHelperText>
@@ -527,117 +687,152 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
                     onChange={(e) => setStakeAmount(e.target.value)}
                     type="number"
                     isDisabled={isTxLoading || !hasWalletBalance}
-                    _focus={{ borderColor: fireColor }}
-                    _hover={{ borderColor: 'gray.500' }}
+                    _focus={{ borderColor: primaryColor, boxShadow: `0 0 0 1px ${primaryColor}` }}
+                    _hover={{ borderColor: lockBorderColor }}
                   />
-                  <InputRightAddon bg={darkInputBg} borderColor={borderColor} p={0}>
-                    <Button 
-                      h="full"
-                      size="sm" 
-                      bg="transparent"
-                      color={fireColor}
-                      borderLeftColor={borderColor}
-                      _hover={{ bg: 'gray.700' }}
-                      isDisabled={isTxLoading || !hasWalletBalance}
-                      onClick={() => walletBalance && setStakeAmount(formatBigIntRaw(walletBalance))}
-                    >
-                      MAX
-                    </Button>
-                  </InputRightAddon>
+                  <InputRightAddon 
+                    bg={darkInputBg} 
+                    borderColor={borderColor} 
+                    px={2}
+                    children={
+                      <Button 
+                        variant="ghost"
+                        size="sm" 
+                        color={primaryColor}
+                        onClick={() => walletBalance && setStakeAmount(formatBigIntRaw(walletBalance))}
+                        isDisabled={isTxLoading || !hasWalletBalance}
+                        _hover={{ bg: 'gray.700' }} // Darker hover for MAX
+                      >
+                        MAX
+                      </Button>
+                    }
+                  />
                 </InputGroup>
+                
+                {/* Display Approval Status */}
+                {allowance !== null && typeof allowance === 'bigint' && allowance > 0n && (
+                  <Flex justify="flex-end" mt={1}>
+                    <Text 
+                      fontSize="xs" 
+                      color={requiresApproval ? "yellow.400" : primaryColor}
+                    >
+                      {`Approved: ${formatBigIntDisplay(allowance)}${requiresApproval && stakeAmount ? " (insufficient)" : ""}`}
+                    </Text>
+                  </Flex>
+                )}
               </FormControl>
 
-              {/* Lock Time Selection */}
+              {/* Lock Duration Selection */}
               <FormControl>
-                <FormHelperText color={subtleTextColor} mb={2}>Select lock duration (optional)</FormHelperText>
-                <Flex gap={2}>
+                <FormHelperText color={subtleTextColor} mb={2}>Lock Duration (higher = better rewards)</FormHelperText>
+                <SimpleGrid columns={2} spacing={2}>
+                  {/* No Lock Button */}
                   <Button 
                     size="sm" 
-                    variant={selectedLockTime === 0 ? "solid" : "outline"}
-                    colorScheme={selectedLockTime === 0 ? "green" : "gray"}
-                    onClick={() => setSelectedLockTime(0)}
+                    height="40px"
+                    bg={selectedOptionIndex === 0 ? lockSelectedYellow : "transparent"}
+                    color={selectedOptionIndex === 0 ? "black" : "white"}
+                    border="1px solid"
+                    borderColor={selectedOptionIndex === 0 ? lockSelectedYellow : lockBorderColor}
+                    fontWeight="medium"
+                    onClick={() => handleLockOptionSelect(0)}
+                    _hover={{ 
+                      bg: selectedOptionIndex === 0 ? lockSelectedYellow : 'gray.700', 
+                      borderColor: selectedOptionIndex === 0 ? lockSelectedYellow : 'gray.500' 
+                    }}
                   >
                     No Lock
                   </Button>
+                  {/* 7d Button */}
                   <Button 
                     size="sm" 
-                    variant={selectedLockTime === 3 ? "solid" : "outline"}
-                    colorScheme={selectedLockTime === 3 ? "yellow" : "gray"}
-                    onClick={() => setSelectedLockTime(3)}
+                    height="40px"
+                    bg="transparent" 
+                    color="white"
+                    border="1px solid"
+                    borderColor={selectedOptionIndex === 1 ? primaryColor : lockBorderColor} 
+                    fontWeight="medium"
+                    onClick={() => handleLockOptionSelect(1)}
+                    _hover={{ bg: "gray.700", borderColor: selectedOptionIndex === 1 ? primaryColor : 'gray.500' }}
                   >
-                    3 Days
+                    7d (+50%)
                   </Button>
+                  {/* 14d Button */}
                   <Button 
                     size="sm" 
-                    variant={selectedLockTime === 7 ? "solid" : "outline"}
-                    colorScheme={selectedLockTime === 7 ? "orange" : "gray"}
-                    onClick={() => setSelectedLockTime(7)}
+                    height="40px"
+                    bg="transparent"
+                    color="white"
+                    border="1px solid"
+                    borderColor={selectedOptionIndex === 2 ? primaryColor : lockBorderColor} 
+                    fontWeight="medium"
+                    onClick={() => handleLockOptionSelect(2)}
+                    _hover={{ bg: "gray.700", borderColor: selectedOptionIndex === 2 ? primaryColor : 'gray.500' }}
                   >
-                    7 Days
+                    14d (+100%)
                   </Button>
+                  {/* 30d Button */}
                   <Button 
                     size="sm" 
-                    variant={selectedLockTime === 30 ? "solid" : "outline"}
-                    colorScheme={selectedLockTime === 30 ? "red" : "gray"}
-                    onClick={() => setSelectedLockTime(30)}
+                    height="40px"
+                    bg="transparent"
+                    color="white"
+                    border="1px solid"
+                    borderColor={selectedOptionIndex === 3 ? primaryColor : lockBorderColor} 
+                    fontWeight="medium"
+                    onClick={() => handleLockOptionSelect(3)}
+                    _hover={{ bg: "gray.700", borderColor: selectedOptionIndex === 3 ? primaryColor : 'gray.500' }}
                   >
-                    30 Days
+                    30d (+200%)
                   </Button>
-                </Flex>
-                <Text fontSize="xs" color="yellow.300" mt={1}>
-                  {selectedLockTime === 0 ? 'No bonus' : 
-                   selectedLockTime === 3 ? '+10% reward bonus' : 
-                   selectedLockTime === 7 ? '+25% reward bonus' : 
-                   selectedLockTime === 30 ? '+50% reward bonus' : ''}
-                </Text>
+                </SimpleGrid>
               </FormControl>
 
-              {/* Stake Action Buttons */}
-              <Box>
+              <Spacer />
+
+              {/* Stake/Approve Buttons */}
+              <VStack spacing={2}> 
                 {showApproveButton ? (
                   <Button 
                     w="full" 
-                    bg={sparxColor} 
-                    color="black" 
-                    _hover={{ bg: 'yellow.500', boxShadow: `0 0 12px ${sparxColor}cc` }}
-                    _active={{ bg: 'yellow.600' }}
+                    h="45px"
+                    bg={buttonBrown}
+                    color="white"
+                    _hover={{ bg: buttonBrownHover }}
                     onClick={handleApprove}
                     isLoading={isTxLoading && hash !== null}
                     isDisabled={!userAddress || isTxLoading || !hasWalletBalance}
+                    borderRadius="md"
                   >
                     Approve {stakingTokenSymbol}
                   </Button>
                 ) : (
                   <Button 
                     w="full" 
-                    bg={burnOrange} 
-                    color="white" 
-                    _hover={{ bg: 'orange.600', boxShadow: `0 0 12px ${burnOrange}cc` }}
-                    _active={{ bg: 'orange.700' }}
+                    h="45px"
+                    bg={buttonBrown} // Back to brown as per screenshot
+                    color="white"
+                    _hover={{ bg: buttonBrownHover }} 
                     onClick={handleStake}
                     isLoading={isTxLoading}
                     isDisabled={!userAddress || isTxLoading || !hasWalletBalance || stakeAmountNum <= 0}
+                    borderRadius="md"
                   >
                     Stake {stakingTokenSymbol}
                   </Button>
                 )}
-              </Box>
-              
-              {hasPendingRewards && !showApproveButton && stakeAmountNum > 0 && (
-                <Text fontSize="sm" color={sparxColor} textAlign="center">
-                  Harvest recommended before staking more
-                </Text>
-              )}
-              {/* Cooldown Timer Display */}
-              {isStakeDisabled && (
-                  <Text fontSize="xs" color={countdownColor} textAlign="center" mt={1}>
-                      Cooldown: {cooldownTimer}
+                
+                {/* Stake Cooldown Timer */}
+                {isStakeDisabled && (
+                  <Text fontSize="xs" color={cooldownTextColor} textAlign="center" mt={0} pt={0}>
+                    Cooldown: {cooldownTimer}
                   </Text>
-              )}
+                )}
+              </VStack>
             </VStack>
           ) : (
             /* Unstake Form */
-            <VStack align="stretch" spacing={4}>
+            <VStack align="stretch" spacing={4} flex="1"> 
               <FormControl>
                 <Flex justify="space-between" mb={1}>
                   <FormHelperText color={subtleTextColor}>Enter amount to unstake</FormHelperText>
@@ -653,65 +848,94 @@ export const StakingPoolCard: React.FC<StakingPoolCardProps> = ({
                     onChange={(e) => setUnstakeAmount(e.target.value)}
                     type="number"
                     isDisabled={isTxLoading || !hasStakedBalance}
-                    _focus={{ borderColor: fireColor }}
-                    _hover={{ borderColor: 'gray.500' }}
+                    _focus={{ borderColor: primaryColor, boxShadow: `0 0 0 1px ${primaryColor}` }}
+                    _hover={{ borderColor: lockBorderColor }}
                   />
-                  <InputRightAddon bg={darkInputBg} borderColor={borderColor} p={0}>
-                    <Button 
-                      h="full"
-                      size="sm" 
-                      bg="transparent"
-                      color={fireColor}
-                      borderLeftColor={borderColor}
-                      _hover={{ bg: 'gray.700' }}
-                      isDisabled={isTxLoading || !hasStakedBalance}
-                      onClick={() => stakedBalance && setUnstakeAmount(formatBigIntRaw(stakedBalance))}
-                    >
-                      MAX
-                    </Button>
-                  </InputRightAddon>
+                  <InputRightAddon 
+                    bg={darkInputBg} 
+                    borderColor={borderColor} 
+                    px={2}
+                    children={
+                      <Button 
+                        variant="ghost"
+                        size="sm" 
+                        color={primaryColor}
+                        onClick={() => stakedBalance && setUnstakeAmount(formatBigIntRaw(stakedBalance))}
+                        isDisabled={isTxLoading || !hasStakedBalance}
+                         _hover={{ bg: 'gray.700' }} // Darker hover for MAX
+                      >
+                        MAX
+                      </Button>
+                    }
+                  />
                 </InputGroup>
               </FormControl>
 
+              <Spacer />
+
+              {/* Main Unstake Button */}
               <Button 
-                bg={burnRed}
-                color="white" 
-                _hover={{ bg: 'red.600', boxShadow: `0 0 12px ${burnRed}cc` }}
-                _active={{ bg: 'red.700' }}
+                w="full"
+                h="45px"
+                bg={buttonRed}
+                color="white"
+                _hover={{ bg: buttonRedHover }}
                 onClick={handleUnstake}
                 isDisabled={!userAddress || !unstakeAmount || unstakeAmountNum <= 0 || !hasStakedBalance || isTxLoading}
                 isLoading={isTxLoading && hash && !isConfirmed && unstakeAmountNum > 0}
-                size="lg"
+                borderRadius="md"
               >
                 Unstake {stakingTokenSymbol}
               </Button>
-              {/* Cooldown Timer Display */}
-               {isWithdrawDisabled && (
-                  <Text fontSize="xs" color={countdownColor} textAlign="center" mt={1}>
-                      Withdraw Cooldown: {withdrawCooldownTimer}
-                  </Text>
+
+              {/* Withdraw Cooldown Timer */}
+              {isWithdrawDisabled && (
+                <Text fontSize="xs" color={cooldownTextColor} textAlign="center" mt={0} pt={0}>
+                  Withdraw Cooldown: {withdrawCooldownTimer}
+                </Text>
               )}
             </VStack>
           )}
         </Box>
 
-        {/* New section for lock status and cooldowns */}
-        <Box p={4} bg="gray.700" borderRadius="md">
-          <HStack spacing={4} justify="space-between">
-            <LockStatusIndicator lockInfo={data.lockInfo} isLoading={false} />
-            
-            <VStack spacing={2} align="stretch" flex={1}>
-              {/* Only show cooldown indicators if relevant cooldowns are active */}
-              {cooldownInfo && (
-                <>
-                  <CooldownIndicator cooldownInfo={cooldownInfo} label="Stake" />
-                  <CooldownIndicator cooldownInfo={cooldownInfo} label="Withdraw" />
-                </>
-              )}
-            </VStack>
-          </HStack>
-        </Box>
+        {/* Bottom Status Badges */} 
+        <HStack spacing={2} justify="space-between" pt={1} px={2} mt="auto"> 
+          {/* Left side - Lock status */}
+          {data.lockInfo && data.lockInfo.secondsRemaining > 0n ? (
+            <Box bg={statusLockedBg} px={3} py={1.5} fontSize="xs" borderRadius="md" textTransform="uppercase">
+              <Text color="white" fontWeight="medium">Locked</Text>
+            </Box>
+          ) : hasStakedBalance ? (
+            <Box bg={statusNotLockedBg} px={3} py={1.5} fontSize="xs" borderRadius="md" textTransform="uppercase">
+              <Text color="white" fontWeight="medium">Not Locked</Text>
+            </Box>
+          ) : (
+            <Box minW="70px" /> /* Placeholder with min width */
+          )}
+          
+          {/* Center - Stake cooldown */}
+          {cooldownInfo?.isCooldownActive ? (
+            <Box bg={statusStakeCdBg} px={3} py={1.5} fontSize="xs" borderRadius="md" textTransform="uppercase">
+              <Text color="white" fontWeight="medium">
+                Stake in {formatDuration(cooldownInfo.cooldownEnds - BigInt(Math.floor(Date.now() / 1000)))}
+              </Text>
+            </Box>
+          ) : (
+            <Box minW="70px" /> /* Placeholder with min width */
+          )}
+          
+          {/* Right - Withdraw cooldown */}
+          {cooldownInfo?.isWithdrawCooldownActive ? (
+            <Box bg={statusWithdrawCdBg} px={3} py={1.5} fontSize="xs" borderRadius="md" textTransform="uppercase">
+              <Text color="white" fontWeight="medium">
+                Withdraw in {formatDuration(cooldownInfo.withdrawCooldownEnds - BigInt(Math.floor(Date.now() / 1000)))}
+              </Text>
+            </Box>
+          ) : (
+            <Box minW="70px" /> /* Placeholder with min width */
+          )}
+        </HStack>
       </VStack>
     </Box>
-  );
+  ); 
 }; 

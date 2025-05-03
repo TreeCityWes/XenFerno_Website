@@ -34,6 +34,7 @@ import erc20Abi from '../../abis/ERC20.json' with { type: 'json' }
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi'
 import { formatUnits, parseUnits, maxUint256, type Abi, Address, BaseError, zeroAddress } from 'viem'
 import { useCountdown } from '../../hooks/useCountdown'
+import { sepolia } from 'wagmi/chains'
 
 // Import token logos
 import sparxLogo from '../../assets/sparx-circle-logo.png'
@@ -124,10 +125,10 @@ const erc20AbiDirect = erc20Abi as Abi;
 // Helper function to map token symbols to known addresses
 const getTokenAddress = (symbol: string, currentAddresses: Addresses): Address | undefined => {
   const mapping: Record<string, string | undefined> = {
-    // 'cbXEN': currentAddresses.XEN, // Removed XEN
-    'XBURN': currentAddresses.xburn, // Use lowercase xburn
-    // 'WETH': currentAddresses.WETH, // Removed WETH
-    'SPARX': currentAddresses.sparx
+    'XBURN': currentAddresses.xburn,
+    'SPARX': currentAddresses.sparx,
+    'cbXEN': currentAddresses.cbxen,
+    'WETH': sepolia.nativeCurrency.symbol === 'ETH' ? '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14' : undefined
   };
   const address = mapping[symbol];
   return address && isContractDeployed(address) ? address as Address : undefined;
@@ -284,13 +285,53 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
 
   // --- Approve Logic ---
   const handleApprove = (tokenAddress: Address | undefined) => {
-      if (!tokenAddress) return;
-      writeContract({
-          address: tokenAddress,
-          abi: erc20AbiDirect,
-          functionName: 'approve',
-          args: [uniswapRouterAddress, maxUint256],
-      });
+      if (!tokenAddress) {
+          console.error("Approval error: tokenAddress is undefined");
+          toast({ title: "Error", description: "Token address is undefined", status: "error" });
+          return;
+      }
+      
+      // Get the exact amount user is trying to approve based on which token needs approval
+      let amountToApprove: bigint;
+      
+      try {
+          // Determine which token needs approval
+          if (tokenAddress === poolToken1Address) {
+              // Token 1 approval - exact amount user entered
+              amountToApprove = parseUnits(amountToken1 || '0', DECIMALS);
+          } else if (tokenAddress === poolToken2Address) {
+              // Token 2 approval - exact amount user entered
+              amountToApprove = parseUnits(amountToken2 || '0', DECIMALS);
+          } else if (tokenAddress === pool.address) {
+              // LP token approval for removing liquidity - exact amount user entered
+              amountToApprove = parseUnits(amountLp || '0', DECIMALS);
+          } else {
+              // Fallback for edge cases - 1000 tokens
+              amountToApprove = parseUnits('1000', DECIMALS);
+          }
+          
+          // Only proceed if amount is greater than zero
+          if (amountToApprove <= 0n) {
+              toast({ title: "Invalid Amount", description: "Please enter an amount greater than zero", status: "warning" });
+              return;
+          }
+          
+          // Logging for debugging
+          console.log('--- Approving Token ---');
+          console.log('Token Address:', tokenAddress);
+          console.log('Router Address (spender):', uniswapRouterAddress);
+          console.log('Amount to Approve:', formatUnits(amountToApprove, DECIMALS));
+          
+          writeContract({
+              address: tokenAddress,
+              abi: erc20AbiDirect,
+              functionName: 'approve',
+              args: [uniswapRouterAddress, amountToApprove],
+          });
+      } catch (error) {
+          console.error("Error calculating approval amount:", error);
+          toast({ title: "Error", description: "Failed to calculate approval amount", status: "error" });
+      }
   };
 
   // --- Add Liquidity Logic ---
@@ -304,6 +345,46 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
     try {
         const amount1Parsed = parseUnits(amountToken1 || '0', DECIMALS);
         const amount2Parsed = parseUnits(amountToken2 || '0', DECIMALS);
+        
+        // Validate input amounts against balances
+        if (poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase()) {
+            // For ETH (Token1)
+            if (nativeEthBalance && amount1Parsed > nativeEthBalance) {
+                toast({ 
+                    title: "Insufficient ETH Balance", 
+                    description: `You have ${formatBigInt(nativeEthBalance)} ETH but entered ${amountToken1}`, 
+                    status: "error" 
+                });
+                return;
+            }
+        } else if (pool.userToken1Balance && amount1Parsed > pool.userToken1Balance) {
+            toast({ 
+                title: `Insufficient ${pool.token1} Balance`, 
+                description: `You have ${formatBigInt(pool.userToken1Balance)} ${pool.token1} but entered ${amountToken1}`, 
+                status: "error" 
+            });
+            return;
+        }
+        
+        if (poolToken2Address?.toLowerCase() === sepoliaWethAddress.toLowerCase()) {
+            // For ETH (Token2)
+            if (nativeEthBalance && amount2Parsed > nativeEthBalance) {
+                toast({ 
+                    title: "Insufficient ETH Balance", 
+                    description: `You have ${formatBigInt(nativeEthBalance)} ETH but entered ${amountToken2}`, 
+                    status: "error" 
+                });
+                return;
+            }
+        } else if (pool.userToken2Balance && amount2Parsed > pool.userToken2Balance) {
+            toast({ 
+                title: `Insufficient ${pool.token2} Balance`, 
+                description: `You have ${formatBigInt(pool.userToken2Balance)} ${pool.token2} but entered ${amountToken2}`, 
+                status: "error" 
+            });
+            return;
+        }
+
         const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 20); // 20 min deadline
 
         // TODO: Add slippage calculation for amountMin
@@ -346,51 +427,115 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
     }
   };
 
-  // --- Remove Liquidity Logic ---
+  // Helper function to identify the SPARX/cbXEN LP pair
+  const isSparxCbxenPair = (poolAddress: string): boolean => {
+    // Get address from config instead of hardcoding
+    const configuredAddress = currentAddresses.LP_SPARX_CBXEN as string;
+    return poolAddress.toLowerCase() === configuredAddress.toLowerCase();
+  };
+
+  // Handle direct button click to open remove mode
+  const handleRemoveClick = () => {
+    setManageMode('remove');
+  };
+
+  // Handle the actual remove liquidity operation
   const handleRemoveLiquidity = () => {
-     if (!userAddress || !poolToken1Address || !poolToken2Address) {
-        console.log("handleRemoveLiquidity aborted: Missing addresses");
-        return;
+    if (!userAddress || !poolToken1Address || !poolToken2Address) {
+      console.log("handleRemoveLiquidity aborted: Missing addresses");
+      return;
     }
 
     try {
-        const lpAmountParsed = parseUnits(amountLp || '0', DECIMALS);
-        const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 20);
+      // Special handling for SPARX/cbXEN pair
+      const useSpecialHandling = isSparxCbxenPair(pool.address);
+      
+      // Use the full amount requested (removed the 1% scaling)
+      const lpAmountParsed = parseUnits(amountLp || '0', DECIMALS);
+      
+      // Validate LP amount against balance
+      if (pool.userLpBalance && lpAmountParsed > pool.userLpBalance) {
+        toast({ 
+          title: "Insufficient LP Token Balance", 
+          description: `You have ${formatBigInt(pool.userLpBalance)} LP tokens but entered ${amountLp}`, 
+          status: "error" 
+        });
+        return;
+      }
+      
+      const lpAmountToUse = lpAmountParsed;
+      
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 20);
 
-        // TODO: Add slippage calculation for amountMin
-        const amount1Min = 0n; // Set to 0 for now, needs calculation based on reserves/share
-        const amount2Min = 0n; // Set to 0 for now
-
-         if (isWethPair) {
-            // Check against sepoliaWethAddress
-            const tokenAddress = poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase() ? poolToken2Address : poolToken1Address;
-            const tokenAmountMin = poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase() ? amount2Min : amount1Min;
-            const ethAmountMin = poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase() ? amount1Min : amount2Min;
-            
-            // Ensure tokenAddress is defined
-             if (!tokenAddress) {
-                 console.error("Remove liquidity error: Could not determine non-WETH token address.");
-                 toast({ title: "Error", description: "Could not determine token address for ETH pair.", status: "error" });
-                 return;
-            }
-
-            writeContract({
-                address: uniswapRouterAddress,
-                abi: routerAbiTyped,
-                functionName: 'removeLiquidityETH',
-                args: [tokenAddress, lpAmountParsed, tokenAmountMin, ethAmountMin, userAddress, deadline],
-            });
-        } else {
-            writeContract({
-                address: uniswapRouterAddress,
-                abi: routerAbiTyped,
-                functionName: 'removeLiquidity',
-                args: [poolToken1Address, poolToken2Address, lpAmountParsed, amount1Min, amount2Min, userAddress, deadline],
-            });
+      if (isWethPair) {
+        // WETH pair handling
+        const tokenAddress = poolToken1Address?.toLowerCase() === sepoliaWethAddress.toLowerCase() ? poolToken2Address : poolToken1Address;
+        
+        if (!tokenAddress) {
+          console.error("Remove liquidity error: Could not determine non-WETH token address.");
+          toast({ title: "Error", description: "Could not determine token address for ETH pair.", status: "error" });
+          return;
         }
+        
+        console.log('--- Remove Liquidity (WETH Pair) ---');
+        console.log('Pool:', pool.name);
+        console.log('LP Amount:', lpAmountToUse.toString());
+        
+        writeContract({
+          address: uniswapRouterAddress,
+          abi: routerAbiTyped,
+          functionName: 'removeLiquidityETH',
+          args: [tokenAddress, lpAmountToUse, 0n, 0n, userAddress, deadline],
+        });
+      } else {
+        // For non-WETH pairs
+        let token0: Address;
+        let token1: Address;
+        
+        if (useSpecialHandling) {
+          // Use the CORRECT addresses from constants (get from current config)
+          const sparxAddress = currentAddresses.sparx as Address;
+          const cbxenAddress = currentAddresses.cbxen as Address;
+          
+          // Compare addresses to determine correct order (lexicographical)
+          const [sortedToken0, sortedToken1] = cbxenAddress.toLowerCase() < sparxAddress.toLowerCase()
+            ? [cbxenAddress, sparxAddress]
+            : [sparxAddress, cbxenAddress];
+            
+          token0 = sortedToken0;
+          token1 = sortedToken1;
+          
+          console.log('Using addresses from config for SPARX/cbXEN:');
+          console.log('SPARX:', sparxAddress);
+          console.log('cbXEN:', cbxenAddress);
+          console.log('Sorted token0:', token0);
+          console.log('Sorted token1:', token1);
+        } else {
+          // Sort addresses for other pairs
+          const addr1 = poolToken1Address.toLowerCase();
+          const addr2 = poolToken2Address.toLowerCase();
+          
+          [token0, token1] = addr1 < addr2 
+            ? [poolToken1Address, poolToken2Address]
+            : [poolToken2Address, poolToken1Address];
+        }
+        
+        console.log('--- Remove Liquidity (Regular Pair) ---');
+        console.log('Pool:', pool.name);
+        console.log('Token0:', token0);
+        console.log('Token1:', token1);
+        console.log('LP Amount:', lpAmountToUse.toString());
+        
+        writeContract({
+          address: uniswapRouterAddress,
+          abi: routerAbiTyped,
+          functionName: 'removeLiquidity',
+          args: [token0, token1, lpAmountToUse, 0n, 0n, userAddress, deadline],
+        });
+      }
     } catch (e) {
-        console.error("Remove liquidity error:", e);
-        toast({ title: "Error preparing transaction", description: (e as Error).message, status: "error", duration: 5000, isClosable: true });
+      console.error("Remove liquidity error:", e);
+      toast({ title: "Error preparing transaction", description: (e as Error).message, status: "error", duration: 5000, isClosable: true });
     }
   };
 
@@ -405,19 +550,45 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
   // Show transaction feedback
   useEffect(() => {
     if (isConfirmed) {
-      toast({ title: "Transaction Confirmed", description: "Liquidity updated successfully.", status: "success", duration: 5000, isClosable: true });
-      onSuccessfulTx(); // Refresh data
-      setManageMode(null); // Close management panel
+      // Check if this was an approval transaction by looking at hash context only
+      const isApprovalTx = hash && hash.toString().includes('approve');
+
+      toast({ 
+        title: "Transaction Confirmed", 
+        description: isApprovalTx ? "Token approval successful. You can now proceed." : "Liquidity updated successfully.", 
+        status: "success", 
+        duration: 5000, 
+        isClosable: true 
+      });
+      
+      onSuccessfulTx(); // Always refresh data
+      
+      // Only reset UI state if it was NOT an approval transaction
+      if (!isApprovalTx) {
+        setManageMode(null); // Close management panel after liquidity operations
+        // Don't reset input amounts here - we'll handle that when closing the panel
+      }
     }
+    
     if (writeError) {
       const message = writeError instanceof BaseError ? writeError.shortMessage : writeError.message;
       toast({ title: "Transaction Error", description: message, status: "error", duration: 7000, isClosable: true });
     }
-     if (confirmationError) {
+    
+    if (confirmationError) {
       const message = confirmationError instanceof BaseError ? confirmationError.shortMessage : confirmationError.message;
       toast({ title: "Confirmation Error", description: message, status: "error", duration: 7000, isClosable: true });
     }
-  }, [isConfirmed, writeError, confirmationError, toast, onSuccessfulTx]);
+  }, [isConfirmed, writeError, confirmationError, hash, toast, onSuccessfulTx]);
+
+  // Reset amounts only when manage mode changes (opening/closing panels)
+  useEffect(() => {
+    if (manageMode === null) {
+      setAmountToken1('');
+      setAmountToken2('');
+      setAmountLp('');
+    }
+  }, [manageMode]);
 
   // Check allowances
   const needsApprovalToken1 = useMemo(() => {
@@ -441,12 +612,29 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
   }, [amountToken2, pool.token2Allowance, poolToken2Address]); // Removed wethAddress dependency
 
    const needsApprovalLp = useMemo(() => {
-      if (!pool.lpTokenAllowance) return false;
-       try {
+      try {
+          // Always check if LP allowance exists
           const lpAmountParsed = parseUnits(amountLp || '0', DECIMALS);
-          return lpAmountParsed > 0n && pool.lpTokenAllowance < lpAmountParsed;
-      } catch { return false; }
-  }, [amountLp, pool.lpTokenAllowance]);
+          
+          // Debug logs for LP approval checks
+          if (pool.name.includes('SPARX/cbXEN')) {
+            console.log('--- SPARX/cbXEN LP Approval Check ---');
+            console.log('LP Address:', pool.address);
+            console.log('LP Amount Parsed:', lpAmountParsed.toString());
+            console.log('Current LP Allowance:', pool.lpTokenAllowance ? pool.lpTokenAllowance.toString() : 'null');
+            console.log('Router Address:', uniswapRouterAddress);
+          }
+          
+          // If no allowance data or it's less than requested amount, need approval
+          if (!pool.lpTokenAllowance || lpAmountParsed > 0n && pool.lpTokenAllowance < lpAmountParsed) {
+            return true;
+          }
+          return false;
+        } catch (e) {
+          console.error("Error checking LP approval:", e);
+          return true; // Assume approval needed if there's an error
+        }
+  }, [amountLp, pool.lpTokenAllowance, pool.address, pool.name, uniswapRouterAddress]);
 
   // Get logo for the pool
   const poolLogo = useMemo(() => getTokenLogo(pool.token1, pool.token2), [pool.token1, pool.token2]);
@@ -458,6 +646,38 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
     console.log(`  Reserves BigInt: ${reserve1BigInt}, ${reserve2BigInt}`);
     console.log(`  User LP Balance: ${pool.userLpBalance}`);
   }, [pool, loading, reserve1BigInt, reserve2BigInt]);
+
+  // Format big integers with K, M, B suffixes for better readability
+  const formatBigIntDisplay = (value: bigint | null | undefined, decimals = 18, displayDecimals = 4) => {
+    if (value === null || typeof value === 'undefined') return '0.0'.padEnd(displayDecimals + 2, '0');
+    const formatted = formatUnits(value, decimals);
+    const num = parseFloat(formatted);
+    
+    // Special case for extremely large numbers (scientific notation) - likely max approvals
+    if (num > 1_000_000_000 || formatted.includes('e+')) {
+      return "1B+";
+    }
+    
+    // Format with suffixes for large numbers
+    if (num >= 1_000_000_000) {
+      return `${(num / 1_000_000_000).toFixed(2)}B`;
+    } else if (num >= 1_000_000) {
+      return `${(num / 1_000_000).toFixed(2)}M`;
+    } else if (num >= 1_000) {
+      return `${(num / 1_000).toFixed(2)}K`;
+    }
+    
+    // Regular formatting for smaller numbers
+    const [integerPart, fractionalPart = ''] = formatted.split('.');
+    return `${integerPart}.${fractionalPart.slice(0, displayDecimals).padEnd(displayDecimals, '0')}`;
+  };
+
+  // --- Colors ---
+  const primaryColor = '#FF6937';  // Define the primary color constant for approvals
+  const buttonBgColor = '#92400e'; // Dark orange/brown color
+  const buttonHoverColor = '#b45309'; // Lighter orange/brown
+  const darkCardBg = '#252f3f'; // Card background
+  const darkInputBg = '#1e293b'; // Input background
 
   // --- Render ---
   return (
@@ -562,7 +782,7 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
             leftIcon={<FaMinus />}
             colorScheme="red"
             _hover={{ transform: 'translateY(-2px)' }}
-            onClick={() => setManageMode('remove')}
+            onClick={handleRemoveClick}
             flex={1}
             isDisabled={isTxLoading || !pool.userLpBalance || pool.userLpBalance === 0n}
             height="48px"
@@ -609,12 +829,41 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
                               borderLeftColor='gray.700'
                               _hover={{ bg: 'gray.700' }}
                               isDisabled={isTxLoading}
-                              onClick={() => handleAmount1Change(formatUnits(userToken1BalanceToDisplay ?? 0n, DECIMALS))}
+                              onClick={() => {
+                                // Use safe max amount
+                                const balance = userToken1BalanceToDisplay ?? 0n;
+                                if (balance > 0n) {
+                                  const safeBalance = balance;
+                                  handleAmount1Change(formatUnits(safeBalance, DECIMALS));
+                                }
+                              }}
                             >
                               MAX
                             </Button>
                         </InputRightAddon>
                     </InputGroup>
+                    {/* Add approval display for Token 1 */}
+                    {!needsApprovalToken1 && 
+                      pool.token1Allowance != null && 
+                      typeof pool.token1Allowance === 'bigint' && 
+                      pool.token1Allowance > 0n && 
+                      poolToken1Address?.toLowerCase() !== sepoliaWethAddress.toLowerCase() && (
+                        <Flex justify="flex-end" mt={1}>
+                          <Text fontSize="xs" color={primaryColor}>
+                            {`Approved: ${formatBigIntDisplay(pool.token1Allowance)}`}
+                          </Text>
+                        </Flex>
+                    )}
+                    {needsApprovalToken1 && 
+                      pool.token1Allowance != null && 
+                      typeof pool.token1Allowance === 'bigint' && 
+                      pool.token1Allowance > 0n && (
+                        <Flex justify="flex-end" mt={1}>
+                          <Text fontSize="xs" color="yellow.400">
+                            {`Approved: ${formatBigIntDisplay(pool.token1Allowance)} (insufficient)`}
+                          </Text>
+                        </Flex>
+                    )}
                 </FormControl>
 
                 {/* Token 2 Input */}
@@ -647,12 +896,41 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
                               borderLeftColor='gray.700'
                               _hover={{ bg: 'gray.700' }}
                               isDisabled={isTxLoading}
-                              onClick={() => handleAmount2Change(formatUnits(userToken2BalanceToDisplay ?? 0n, DECIMALS))}
+                              onClick={() => {
+                                // Use safe max amount
+                                const balance = userToken2BalanceToDisplay ?? 0n;
+                                if (balance > 0n) {
+                                  const safeBalance = balance;
+                                  handleAmount2Change(formatUnits(safeBalance, DECIMALS));
+                                }
+                              }}
                             >
                               MAX
                             </Button>
                         </InputRightAddon>
                     </InputGroup>
+                    {/* Add approval display for Token 2 */}
+                    {!needsApprovalToken2 && 
+                      pool.token2Allowance != null && 
+                      typeof pool.token2Allowance === 'bigint' && 
+                      pool.token2Allowance > 0n && 
+                      poolToken2Address?.toLowerCase() !== sepoliaWethAddress.toLowerCase() && (
+                        <Flex justify="flex-end" mt={1}>
+                          <Text fontSize="xs" color={primaryColor}>
+                            {`Approved: ${formatBigIntDisplay(pool.token2Allowance)}`}
+                          </Text>
+                        </Flex>
+                    )}
+                    {needsApprovalToken2 && 
+                      pool.token2Allowance != null && 
+                      typeof pool.token2Allowance === 'bigint' && 
+                      pool.token2Allowance > 0n && (
+                        <Flex justify="flex-end" mt={1}>
+                          <Text fontSize="xs" color="yellow.400">
+                            {`Approved: ${formatBigIntDisplay(pool.token2Allowance)} (insufficient)`}
+                          </Text>
+                        </Flex>
+                    )}
                 </FormControl>
 
                 {/* Action Buttons (Approve/Add) */}
@@ -687,6 +965,7 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
             {manageMode === 'remove' && (
               <VStack spacing={4} align="stretch">
                  <Heading size="sm" color="red.500">Remove Liquidity</Heading>
+                 
                 {/* LP Token Input */}
                 <FormControl>
                     <Flex justify="space-between" mb={1}>
@@ -716,40 +995,68 @@ const PoolCard: React.FC<PoolCardProps> = ({ pool, loading, onSuccessfulTx }) =>
                               borderLeftColor='gray.700'
                               _hover={{ bg: 'gray.700' }}
                               isDisabled={isTxLoading}
-                              onClick={() => setAmountLp(formatUnits(pool.userLpBalance ?? 0n, DECIMALS))}
+                              onClick={() => {
+                                // Use safe max amount
+                                const balance = pool.userLpBalance ?? 0n;
+                                if (balance > 0n) {
+                                  const safeBalance = balance;
+                                  setAmountLp(formatUnits(safeBalance, DECIMALS));
+                                }
+                              }}
                             >
                               MAX
                             </Button>
                         </InputRightAddon>
                     </InputGroup>
+                    {/* Add approval display for LP tokens */}
+                    {!needsApprovalLp && 
+                      pool.lpTokenAllowance != null && 
+                      typeof pool.lpTokenAllowance === 'bigint' && 
+                      pool.lpTokenAllowance > 0n && (
+                        <Flex justify="flex-end" mt={1}>
+                          <Text fontSize="xs" color={primaryColor}>
+                            Approved: {formatBigIntDisplay(pool.lpTokenAllowance)}
+                          </Text>
+                        </Flex>
+                    )}
+                    {needsApprovalLp && 
+                      pool.lpTokenAllowance != null && 
+                      typeof pool.lpTokenAllowance === 'bigint' && 
+                      pool.lpTokenAllowance > 0n && (
+                        <Flex justify="flex-end" mt={1}>
+                          <Text fontSize="xs" color="yellow.400">
+                            Approved: {formatBigIntDisplay(pool.lpTokenAllowance)} (insufficient)
+                          </Text>
+                        </Flex>
+                    )}
                 </FormControl>
 
-                 {/* Action Buttons (Approve/Remove) */}
-                 <HStack>
-                     {needsApprovalLp && (
-                         <Button 
-                            colorScheme="yellow"
-                            onClick={() => handleApprove(pool.address)} 
-                            isLoading={isTxLoading && hash !== null}
-                            isDisabled={isTxLoading}
-                            flex={1}
-                        >
-                            Approve LP Tokens
-                        </Button>
-                     )}
-                     {!needsApprovalLp && (
+                {/* Action Buttons (Approve/Remove) */}
+                <HStack>
+                    {needsApprovalLp && (
                         <Button 
-                            colorScheme="red"
-                            onClick={handleRemoveLiquidity} 
-                            isLoading={isTxLoading}
-                            isDisabled={isTxLoading || uniswapRouterAddress === zeroAddress || !amountLp || parseFloat(amountLp) <= 0}
-                            flex={1}
-                            size="lg"
+                          colorScheme="yellow"
+                          onClick={() => handleApprove(pool.address)} 
+                          isLoading={isTxLoading && hash !== null}
+                          isDisabled={isTxLoading}
+                          flex={1}
                         >
-                            Remove Liquidity
+                          Approve LP Tokens
                         </Button>
-                     )}
-                 </HStack>
+                    )}
+                    {!needsApprovalLp && (
+                      <Button 
+                          colorScheme="red"
+                          onClick={handleRemoveLiquidity} 
+                          isLoading={isTxLoading}
+                          isDisabled={isTxLoading || uniswapRouterAddress === zeroAddress || !amountLp || parseFloat(amountLp) <= 0}
+                          flex={1}
+                          size="lg"
+                      >
+                          Remove Liquidity
+                      </Button>
+                    )}
+                </HStack>
               </VStack>
             )}
           </Box>
