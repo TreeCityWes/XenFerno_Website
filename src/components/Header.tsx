@@ -252,7 +252,7 @@ const Header: React.FC = () => {
                             TG
                         </Link>
                         <Link 
-                            href="https://xenburner.gitbook.io/sparx" 
+                            href="https://burnxen.gitbook.io/burnmorexen" 
                             isExternal 
                             fontWeight="bold" 
                             fontSize={{ base: 'sm', md: 'md' }} 
